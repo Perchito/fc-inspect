@@ -1,0 +1,82 @@
+import express from 'express';
+import pg from 'pg';
+import { readFileSync } from 'node:fs';
+import {
+  SESSION_DAYS, verifyPassword, newToken, tokenHash, readCookie,
+  loginBlocked, loginFailed, loginOk,
+} from './lib/auth.mjs';
+
+const { DATABASE_URL, PORT = 4620 } = process.env;
+if (!DATABASE_URL) throw new Error('DATABASE_URL is required');
+
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
+const app = express();
+app.set('trust proxy', 'loopback'); // cloudflared on localhost sets X-Forwarded-Proto
+app.use(express.json({ limit: '2mb' }));
+
+const COOKIE = 'fci_session';
+const clientIp = (req) => String(req.headers['cf-connecting-ip'] || req.ip);
+
+// ── session ─────────────────────────────────────────────
+app.use(async (req, res, next) => {
+  const token = readCookie(req, COOKIE);
+  if (!token) return next();
+  try {
+    const { rows } = await pool.query(
+      `select u.id, u.email, u.name, u.role, u.client_id from sessions s
+         join users u on u.id = s.user_id
+        where s.token_hash = $1 and s.expires_at > now() and u.active`,
+      [tokenHash(token)]);
+    req.user = rows[0];
+    next();
+  } catch (e) { next(e); }
+});
+
+const requireUser = (...roles) => (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: 'Not logged in' });
+  if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'Not allowed' });
+  next();
+};
+
+app.post('/api/login', async (req, res) => {
+  const ip = clientIp(req);
+  if (loginBlocked(ip)) return res.status(429).json({ error: 'Too many attempts — try again in 15 minutes.' });
+  const { email = '', password = '' } = req.body || {};
+  const { rows } = await pool.query('select id, pass_hash from users where lower(email) = lower($1) and active', [String(email).trim()]);
+  if (!rows[0] || !verifyPassword(String(password), rows[0].pass_hash)) {
+    loginFailed(ip);
+    console.warn(`[auth] failed login for ${String(email).slice(0, 80)} from ${ip}`);
+    return res.status(401).json({ error: 'Wrong email or password' });
+  }
+  loginOk(ip);
+  const token = newToken();
+  await pool.query(`insert into sessions (token_hash, user_id, expires_at) values ($1, $2, now() + $3::interval)`,
+    [tokenHash(token), rows[0].id, `${SESSION_DAYS} days`]);
+  await pool.query('delete from sessions where expires_at < now()');
+  res.cookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge: SESSION_DAYS * 86400_000 });
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', async (req, res) => {
+  const token = readCookie(req, COOKIE);
+  if (token) await pool.query('delete from sessions where token_hash = $1', [tokenHash(token)]);
+  res.clearCookie(COOKIE).json({ ok: true });
+});
+
+app.get('/api/me', requireUser(), (req, res) => res.json(req.user));
+
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+// Cloudflare rewrites .js/.css to a 4h browser cache, so index.html (never
+// cached) points at them with ?v=<start time>: every restart busts it.
+const VERSION = Date.now().toString(36);
+const indexHtml = readFileSync('public/index.html', 'utf8').replaceAll('__V__', VERSION);
+app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(indexHtml));
+app.use(express.static('public', { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Server error' });
+});
+
+app.listen(PORT, () => console.log(`FC Inspect on :${PORT}`));

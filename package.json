@@ -1,0 +1,14 @@
+{
+  "name": "fc-inspect",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node lib/auth.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.12.0"
+  }
+}

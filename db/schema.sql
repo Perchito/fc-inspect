@@ -1,0 +1,113 @@
+-- FC Inspect — Postgres schema. Self-hosted on perchito. Safe to re-run.
+
+create extension if not exists pgcrypto;
+
+create table if not exists clients (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null,
+  contact_name text,
+  email        text,
+  phone        text,
+  created_at   timestamptz not null default now()
+);
+
+create table if not exists users (
+  id         uuid primary key default gen_random_uuid(),
+  email      text not null,
+  name       text not null,
+  role       text not null check (role in ('admin', 'inspector', 'cleaner', 'client')),
+  pass_hash  text not null,
+  client_id  uuid references clients(id) on delete cascade,  -- set for role = client
+  active     boolean not null default true,
+  created_at timestamptz not null default now(),
+  check ((role = 'client') = (client_id is not null))
+);
+create unique index if not exists users_email_idx on users (lower(email));
+
+create table if not exists sessions (
+  token_hash text primary key,  -- sha256 of the cookie value
+  user_id    uuid not null references users(id) on delete cascade,
+  expires_at timestamptz not null
+);
+
+create table if not exists sites (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  name       text not null,
+  address    text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists site_cleaners (
+  site_id uuid not null references sites(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  primary key (site_id, user_id)
+);
+
+create table if not exists templates (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  items      jsonb not null default '[]',  -- [{key, label, hint}]
+  created_at timestamptz not null default now()
+);
+
+create table if not exists site_templates (
+  site_id     uuid not null references sites(id) on delete cascade,
+  template_id uuid not null references templates(id) on delete cascade,
+  primary key (site_id, template_id)
+);
+
+create table if not exists inspections (
+  id               uuid primary key default gen_random_uuid(),
+  site_id          uuid not null references sites(id),
+  template_id      uuid references templates(id) on delete set null,
+  template_name    text not null,
+  inspector_id     uuid not null references users(id),
+  status           text not null default 'draft'
+                   check (status in ('draft', 'submitted', 'returned', 'approved')),
+  started_at       timestamptz not null default now(),
+  finished_at      timestamptz,
+  start_gps        jsonb,  -- {lat, lng, accuracy}
+  end_gps          jsonb,
+  inspector_sig    text,   -- PNG data URL
+  approved_by      uuid references users(id),
+  approved_at      timestamptz,
+  emailed_at       timestamptz,
+  emailed_to       text,
+  client_signed_by uuid references users(id),
+  client_sig       text,
+  client_signed_at timestamptz
+);
+create index if not exists inspections_status_idx on inspections (status);
+create index if not exists inspections_site_idx on inspections (site_id);
+
+-- copy of the template items taken when the inspection starts, so later
+-- template edits never change old reports
+create table if not exists inspection_items (
+  inspection_id uuid not null references inspections(id) on delete cascade,
+  item_key      text not null,
+  position      int  not null,
+  label         text not null,
+  note          text not null default '',
+  primary key (inspection_id, item_key)
+);
+
+create table if not exists photos (
+  id            uuid primary key default gen_random_uuid(),
+  inspection_id uuid not null references inspections(id) on delete cascade,
+  item_key      text not null,
+  storage_key   text not null,
+  caption       text not null default '',
+  taken_at      timestamptz,
+  gps           jsonb,
+  created_at    timestamptz not null default now()
+);
+create index if not exists photos_inspection_idx on photos (inspection_id);
+
+create table if not exists comments (
+  id            uuid primary key default gen_random_uuid(),
+  inspection_id uuid not null references inspections(id) on delete cascade,
+  user_id       uuid not null references users(id),
+  body          text not null,
+  created_at    timestamptz not null default now()
+);
