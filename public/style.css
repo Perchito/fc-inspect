@@ -165,3 +165,17 @@ html, body { overflow-x: clip; }
 .after-slot { display: grid; place-items: center; border: 2px dashed var(--blue); background: #fff; color: var(--blue); font-weight: 600; cursor: pointer; }
 .small-pairs { margin-top: 8px; }
 .small-pairs .thumb-pending { aspect-ratio: 4 / 3; }
+
+/* admin review */
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.chips a { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--navy); text-decoration: none; font-size: 14px; font-weight: 600; }
+.chips a[aria-current] { background: var(--navy); color: #fff; border-color: var(--navy); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 0; font-size: 15px; }
+.facts dt { font-weight: 600; color: var(--muted); }
+.facts dd { margin: 0; }
+@media (max-width: 560px) { .facts { grid-template-columns: 1fr; gap: 2px; } .facts dd { margin-bottom: 8px; } }
+.comment { margin: 8px 0 0; }
+.sig-img { max-width: 320px; width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+.pairs a, .thumbs a { display: block; }
+dialog textarea { min-height: 140px; }
+@media (max-width: 560px) { .review-bar { position: static; border-top: none; } }

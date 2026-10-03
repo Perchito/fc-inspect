@@ -6,7 +6,9 @@ import {
   loginBlocked, loginFailed, loginOk,
 } from './lib/auth.mjs';
 import { adminRoutes } from './lib/admin.mjs';
-import { inspectionRoutes } from './lib/inspections.mjs';
+import { inspectionRoutes, loadInspection } from './lib/inspections.mjs';
+import { reviewRoutes, pdfFor } from './lib/review.mjs';
+import { pdfFilename } from './lib/pdf.mjs';
 
 const { DATABASE_URL, PORT = 4620 } = process.env;
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -66,7 +68,18 @@ app.post('/api/logout', async (req, res) => {
 });
 
 app.get('/api/me', requireUser(), (req, res) => res.json(req.user));
-app.use('/api/admin', requireUser('admin'), adminRoutes(pool));
+app.use('/api/admin', requireUser('admin'), adminRoutes(pool), reviewRoutes(pool));
+
+// report PDF: anyone who may see the inspection (clients/cleaners only once approved)
+app.get('/api/inspections/:id/pdf', requireUser(), async (req, res) => {
+  const insp = await loadInspection(pool, req.user, req.params.id);
+  if (!insp) return res.status(404).json({ error: 'Inspection not found' });
+  const pdf = await pdfFor(pool, insp);
+  res.set({
+    'content-type': 'application/pdf', 'cache-control': 'private, no-store',
+    'content-disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${pdfFilename(insp)}"`,
+  }).send(pdf);
+});
 app.use('/api', inspectionRoutes(pool, requireUser));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));

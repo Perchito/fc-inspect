@@ -109,12 +109,12 @@ function showLogin(error = '') {
 }
 
 // ── shell ───────────────────────────────────────────────
-const ADMIN_NAV = [['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users'], ['#/inspect', 'Inspect']];
+const ADMIN_NAV = [['#/inspections', 'Inspections'], ['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users'], ['#/inspect', 'Inspect']];
 
 function shell(content) {
   const nav = me.role === 'admin'
     ? `<nav class="tabs">${ADMIN_NAV.map(([href, label]) =>
-        `<a href="${href}" ${location.hash.startsWith(href) ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>` : '';
+        `<a href="${href}" ${location.hash === href || location.hash.startsWith(`${href}/`) ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>` : '';
   $app.innerHTML = `
     <header class="top">
       <img src="/img/fc-logo-white-icon.png" alt="" class="logo-sm">
@@ -355,6 +355,8 @@ function viewHome() {
 // inspect.js imported with this file's ?v= so Cloudflare's 4h cache never serves a stale copy
 const { inspectViews, flush } = await import(`./inspect.js${new URL(import.meta.url).search}`);
 const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog });
+const { reviewViews } = await import(`./review.js${new URL(import.meta.url).search}`);
+const review = reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog });
 const INSPECT_ROUTES = [
   [/^#\/inspect$/, insp.home], [/^#\/inspect\/new$/, insp.start],
   [/^#\/inspect\/([\w-]{36})$/, insp.overview], [/^#\/inspect\/([\w-]{36})\/finish$/, insp.finish],
@@ -362,6 +364,9 @@ const INSPECT_ROUTES = [
 ];
 let leaveGuard = null;
 const ROUTES = [...INSPECT_ROUTES,
+  [/^#\/inspections$/, () => review.list('submitted')],
+  [/^#\/inspections\/f\/(\w+)$/, (f) => review.list(f === 'all' ? '' : f)],
+  [/^#\/inspections\/([\w-]{36})$/, review.detail],
   [/^#\/clients\/([\w-]+)$/, viewClient], [/^#\/clients$/, viewClients],
   [/^#\/templates\/([\w-]+)$/, viewTemplate], [/^#\/templates$/, viewTemplates],
   [/^#\/users$/, viewUsers],
@@ -373,7 +378,7 @@ async function route() {
   const routes = { admin: ROUTES, inspector: INSPECT_ROUTES }[me.role];
   if (!routes) return viewHome();
   const hit = routes.find(([re]) => re.test(location.hash));
-  if (!hit) { location.replace(me.role === 'admin' ? '#/clients' : '#/inspect'); return; }
+  if (!hit) { location.replace(me.role === 'admin' ? '#/inspections' : '#/inspect'); return; }
   try { await hit[1](...location.hash.match(hit[0]).slice(1)); }
   catch (err) { err.status === 401 ? showLogin('Your session ended — log in again.') : shell(`<p class="error">${esc(err.message)}</p>`); }
 }
