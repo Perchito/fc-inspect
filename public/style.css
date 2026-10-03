@@ -180,3 +180,24 @@ html, body { overflow-x: clip; }
 dialog textarea { min-height: 140px; }
 @media (max-width: 560px) { .review-bar { position: static; border-top: none; } }
 .reply { margin-top: 12px; }
+
+/* scores + urgent actions */
+.score-pick { border: none; padding: 0; margin: 16px 0 0; }
+.score-pick legend { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+.score-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.score-grid button { min-height: 48px; font: inherit; font-size: 18px; font-weight: 700; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer; }
+.score-grid button.low { color: var(--error); }
+.score-grid button[aria-pressed=true] { background: var(--navy); color: #fff; border-color: var(--navy); }
+.score-grid button.low[aria-pressed=true] { background: var(--error); border-color: var(--error); }
+.urgent { border-color: #fda29b; background: #fef3f2; }
+.urgent h2 { color: var(--error); }
+.urgent ul { margin: 8px 0 0; padding-left: 20px; }
+.score-pill { display: inline-block; font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px; background: #d1fadf; color: #05603a; white-space: nowrap; }
+.score-pill.low { background: #fee4e2; color: var(--error); }
+.urgent-pill { background: var(--error); color: #fff; font-weight: 700; }
+.avg { font-size: 18px; }
+.plan { border-left: 4px solid var(--error); background: #fef3f2; padding: 10px 12px; border-radius: 0 8px 8px 0; margin: 10px 0; }
+.plan p { margin: 4px 0; }
+.plan.overdue { background: #fee4e2; }
+.plan.done { border-left-color: #12b76a; background: #ecfdf3; }
+.plan .btn { margin-top: 6px; }

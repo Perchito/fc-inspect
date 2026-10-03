@@ -109,7 +109,7 @@ function showLogin(error = '') {
 }
 
 // ── shell ───────────────────────────────────────────────
-const ADMIN_NAV = [['#/inspections', 'Inspections'], ['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users'], ['#/inspect', 'Inspect']];
+const ADMIN_NAV = [['#/inspections', 'Inspections'], ['#/actions', 'Actions'], ['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users'], ['#/inspect', 'Inspect']];
 
 function shell(content) {
   const nav = me.role === 'admin'
@@ -364,6 +364,7 @@ const ROUTES = [...INSPECT_ROUTES,
   [/^#\/inspections$/, () => review.list('submitted')],
   [/^#\/inspections\/f\/(\w+)$/, (f) => review.list(f === 'all' ? '' : f)],
   [/^#\/inspections\/([\w-]{36})$/, review.detail],
+  [/^#\/actions$/, () => review.actions(false)], [/^#\/actions\/done$/, () => review.actions(true)],
   [/^#\/clients\/([\w-]+)$/, viewClient], [/^#\/clients$/, viewClients],
   [/^#\/templates\/([\w-]+)$/, viewTemplate], [/^#\/templates$/, viewTemplates],
   [/^#\/users$/, viewUsers],

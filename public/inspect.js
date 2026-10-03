@@ -127,6 +127,14 @@ const STATUS = {
   draft: ['In progress', 'pill'], returned: ['Sent back — needs changes', 'pill warn'],
   submitted: ['Waiting for review', 'pill'], approved: ['Approved', 'pill ok'],
 };
+// quality checks: every item scored 1-10; below 7 needs an urgent action plan (mirrors itemProblems on the server)
+export const LOW_SCORE = 7;
+export const itemProblem = (it, mode) => mode !== 'check' ? ''
+  : !it.score ? 'Give this item a score'
+  : it.score < LOW_SCORE && !(it.action_what?.trim() && it.action_who?.trim() && it.action_due) ? 'Fill in the urgent action plan: what, who and deadline'
+  : '';
+const scorePill = (it) => it.score ? `<span class="score-pill${it.score < LOW_SCORE ? ' low' : ''}">${it.score}/10</span>` : '';
+const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
 const fmt = (d) => new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog }) {
@@ -204,9 +212,9 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
       <h1>What kind of inspection?</h1>
       <p class="muted">${esc(site.name)} · ${esc(template.name)}</p>
       <button class="card mode-pick" data-mode="check"><strong>Quality check</strong>
-        <span class="muted">Photos and notes of how the site looks now.</span></button>
+        <span class="muted">Score each area 1–10 with photos and notes. Shared with the client once approved.</span></button>
       <button class="card mode-pick" data-mode="before_after"><strong>Before &amp; after</strong>
-        <span class="muted">For deep cleans: take before photos now, come back after the clean and add an after photo next to each one.</span></button>`);
+        <span class="muted">For deep cleans: before photos now, after photos next to each one once the clean is done. Internal — never shown to the client.</span></button>`);
     view.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => begin(site, template, b.dataset.mode));
   }
 
@@ -234,7 +242,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     if (current?.id === id) return current;
     const [insp, pending] = await Promise.all([api(`/inspections/${id}`), outbox.all()]);
     for (const e of pending.filter((p) => p.inspectionId === id)) {
-      if (e.kind === 'note') insp.items.find((i) => i.item_key === e.itemKey).note = JSON.parse(e.body).note;
+      if (e.kind === 'note') Object.assign(insp.items.find((i) => i.item_key === e.itemKey), JSON.parse(e.body));
       if (e.kind === 'delete') insp.photos = insp.photos.filter((p) => p.id !== e.photoId);
     }
     insp.submitting = pending.some((e) => e.inspectionId === id && e.kind === 'submit');
@@ -266,7 +274,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
           ? `<div class="pairs small-pairs">${photos.filter((p) => p.phase !== 'after').map((b) =>
               `<div class="pair">${img(b)}${img(photos.find((a) => a.pair_id === b.id))}</div>`).join('')}</div>` : '';
         return `<li class="card">
-          <div class="row between"><strong>${n + 1}. ${esc(it.label)}</strong>
+          <div class="row between"><strong>${n + 1}. ${esc(it.label)} ${scorePill(it)}</strong>
             ${can ? `<a class="btn" href="#/inspect/${id}/${n + 1}">Edit</a>` : ''}</div>
           ${pairs ? pairs + (local.length ? `<p class="muted small">${local.length} photo${local.length === 1 ? '' : 's'} uploading</p>` : '')
             : photos.length + local.length ? `<div class="thumbs">${photos.map((p) => `<img src="/api/photos/${p.id}" alt="" loading="lazy">`).join('')}
@@ -306,10 +314,22 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
         <label class="btn grow center-text">From gallery<input type="file" accept="image/*" multiple hidden data-add></label>
       </div>
       <label>Notes<textarea id="note" rows="4" placeholder="What did you find? e.g. bins not emptied, streaks on glass">${esc(it.note)}</textarea></label>
+      ${ba ? '' : `
+      <fieldset class="score-pick"><legend>Score <span class="muted small">1 = very poor · 10 = perfect</span></legend>
+        <div class="score-grid">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
+          `<button type="button" data-score="${v}" class="${v < LOW_SCORE ? 'low' : ''}" aria-pressed="${it.score === v}">${v}</button>`).join('')}</div>
+      </fieldset>
+      <section class="card urgent stack" id="plan" ${it.score && it.score < LOW_SCORE ? '' : 'hidden'}>
+        <div><h2>Urgent action plan</h2><p class="small">Below ${LOW_SCORE} — say how this will be put right. The office is alerted when you submit.</p></div>
+        <label>What will be done<textarea data-f="action_what" rows="3" placeholder="e.g. Re-clean all toilets and descale taps">${esc(it.action_what)}</textarea></label>
+        <label>Who is responsible<input data-f="action_who" value="${esc(it.action_who)}" placeholder="Name"></label>
+        <label>Deadline<input type="date" data-f="action_due" value="${esc(it.action_due)}" min="${new Date().toISOString().slice(0, 10)}"></label>
+      </section>`}
+      <p class="error small" id="missing" role="alert" hidden></p>
       ${gpsDenied ? '<p class="small warn-text">Location is off — the report will show no GPS. Allow location for this site in your browser settings.</p>' : ''}
       <div class="row between sticky-bar">
         ${n > 1 ? `<a class="btn" href="#/inspect/${id}/${n - 1}">← Previous</a>` : '<span></span>'}
-        <a class="btn primary" href="${last ? `#/inspect/${id}/finish` : `#/inspect/${id}/${n + 1}`}">${last ? 'Review &amp; sign →' : 'Next →'}</a>
+        <a class="btn primary" id="next" href="${last ? `#/inspect/${id}/finish` : `#/inspect/${id}/${n + 1}`}">${last ? 'Review &amp; sign →' : 'Next →'}</a>
       </div>`);
 
     const $thumbs = view.querySelector('#thumbs');
@@ -383,17 +403,37 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
       render();
     });
 
-    let noteTimer;
-    const saveNote = () => {
-      clearTimeout(noteTimer);
-      if (it.note === view.querySelector('#note').value) return;
-      it.note = view.querySelector('#note').value;
+    // note, score and action plan are saved together as one queued update per item
+    let saveTimer, dirty = false;
+    const fields = () => ba ? { note: it.note } : { note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null };
+    const saveItem = () => {
+      clearTimeout(saveTimer);
+      if (!dirty) return;
+      dirty = false;
       outbox.put({ id: `note:${id}:${it.item_key}`, inspectionId: id, itemKey: it.item_key, kind: 'note', method: 'PUT',
-        url: `/api/inspections/${id}/items/${encodeURIComponent(it.item_key)}`, body: JSON.stringify({ note: it.note }), contentType: 'application/json' });
+        url: `/api/inspections/${id}/items/${encodeURIComponent(it.item_key)}`, body: JSON.stringify(fields()), contentType: 'application/json' });
     };
-    view.querySelector('#note').addEventListener('input', () => { clearTimeout(noteTimer); noteTimer = setTimeout(saveNote, 800); });
-    view.querySelector('#note').addEventListener('blur', saveNote);
-    addEventListener('hashchange', saveNote, { once: true });
+    const changed = (now = false) => { dirty = true; view.querySelector('#missing').hidden = true; clearTimeout(saveTimer); now ? saveItem() : (saveTimer = setTimeout(saveItem, 800)); };
+    view.querySelector('#note').addEventListener('input', (e) => { it.note = e.target.value; changed(); });
+    view.querySelectorAll('[data-f]').forEach((el) => el.addEventListener('input', () => { it[el.dataset.f] = el.value; changed(); }));
+    view.querySelectorAll('[data-score]').forEach((b) => b.addEventListener('click', () => {
+      it.score = +b.dataset.score;
+      view.querySelectorAll('[data-score]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      const plan = view.querySelector('#plan');
+      plan.hidden = it.score >= LOW_SCORE;
+      if (!plan.hidden) plan.querySelector('textarea').focus();
+      changed(true);
+    }));
+    view.addEventListener('focusout', saveItem);
+    addEventListener('hashchange', saveItem, { once: true });
+    // can't move on until the item is scored (and planned if low)
+    view.querySelector('#next').addEventListener('click', (e) => {
+      const problem = itemProblem(it, insp.mode);
+      if (!problem) return;
+      e.preventDefault();
+      const m = view.querySelector('#missing'); m.textContent = problem; m.hidden = false;
+      (view.querySelector('#plan:not([hidden])') || view.querySelector('.score-pick'))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   }
 
   // review + signature + submit
@@ -405,14 +445,18 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
       + pending.filter((p) => p.itemKey === it.item_key).length);
     const empty = insp.items.filter((it, i) => !counts[i] && !it.note.trim());
     const allPhotos = [...insp.photos, ...pending.map((e) => ({ id: e.id, phase: e.phase, pair_id: e.pairId }))];
+    const problems = insp.items.map((it, i) => [i, itemProblem(it, insp.mode)]).filter(([, p]) => p);
     const noAfter = insp.mode === 'before_after'
       ? allPhotos.filter((b) => b.phase === 'before' && !allPhotos.some((a) => a.phase === 'after' && a.pair_id === b.id)).length : 0;
     const view = page(`
       <p><a href="#/inspect/${id}/${insp.items.length}">← Back to items</a></p>
       <h1>Review &amp; sign</h1>
+      ${avg(insp.items) ? `<p class="avg">Overall score <strong>${avg(insp.items)}</strong> / 10</p>` : ''}
       <ul class="list">${insp.items.map((it, i) => `<li><a class="list-link" href="#/inspect/${id}/${i + 1}">
         <span class="grow">${i + 1}. ${esc(it.label)}</span>
-        <span class="muted small">${counts[i]} photo${counts[i] === 1 ? '' : 's'}${it.note.trim() ? ' · note' : ''}</span></a></li>`).join('')}</ul>
+        <span class="muted small">${counts[i]} photo${counts[i] === 1 ? '' : 's'}${it.note.trim() ? ' · note' : ''}</span>${scorePill(it)}</a></li>`).join('')}</ul>
+      ${problems.length ? `<div class="card urgent"><strong>Before you can submit:</strong><ul>${problems.map(([i, p]) =>
+        `<li><a href="#/inspect/${id}/${i + 1}">${esc(insp.items[i].label)}</a> — ${esc(p.toLowerCase())}</li>`).join('')}</ul></div>` : ''}
       ${noAfter ? `<p class="warn-text small">${noAfter} before photo${noAfter === 1 ? ' has' : 's have'} no after photo yet.</p>` : ''}
       ${empty.length ? `<p class="warn-text small">${empty.length} item${empty.length === 1 ? ' has' : 's have'} no photo or note: ${empty.map((i) => esc(i.label)).join(', ')}.</p>` : ''}
       <section class="card stack">
@@ -423,7 +467,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
       </section>`);
     const pad = signaturePad(view.querySelector('#sig'));
     const $submit = view.querySelector('#submit');
-    pad.onInk((inked) => { $submit.disabled = !inked; });
+    pad.onInk((inked) => { $submit.disabled = !inked || problems.length > 0; });
     view.querySelector('#clear').onclick = () => pad.clear();
     $submit.onclick = async () => {
       $submit.disabled = true;

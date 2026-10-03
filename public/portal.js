@@ -1,7 +1,7 @@
 // Client portal and cleaner view: approved reports only. Clients can sign off and message the office.
 // same ?v= as app.js uses, so these are the very same module instances (one upload outbox)
 const v = new URL(import.meta.url).search;
-const { itemPhotos, thread } = await import(`./review.js${v}`);
+const { itemPhotos, thread, scorePill, actionPlan } = await import(`./review.js${v}`);
 const { signaturePad } = await import(`./inspect.js${v}`);
 
 const fmt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -18,7 +18,7 @@ export function portalViews({ api, post, esc, toast, shell, me }) {
       ${rows.length ? `<ul class="list">${rows.map((i) => `
         <li><a class="list-link" href="#/reports/${i.id}">
           <span class="grow"><strong>${esc(i.site_name)}</strong><br>
-            <span class="muted small">${day(i.started_at)} · ${i.mode === 'before_after' ? 'Before &amp; after' : 'Quality check'}${i.comment_count && isClient() ? ` · ${i.comment_count} message${i.comment_count === 1 ? '' : 's'}` : ''}</span></span>
+            <span class="muted small">${day(i.started_at)} · ${i.mode === 'before_after' ? 'Before &amp; after' : 'Quality check'}${i.avg_score ? ` · score ${i.avg_score}/10` : ''}${i.comment_count && isClient() ? ` · ${i.comment_count} message${i.comment_count === 1 ? '' : 's'}` : ''}</span></span>
           ${isClient() ? (i.client_signed_at ? '<span class="pill ok">Signed off</span>' : '<span class="pill warn">Awaiting your sign-off</span>') : ''}
         </a></li>`).join('')}</ul>`
         : '<p class="empty">No reports yet.</p>'}`);
@@ -36,6 +36,7 @@ export function portalViews({ api, post, esc, toast, shell, me }) {
           <dt>Date</dt><dd>${day(insp.started_at)}</dd>
           <dt>Inspection</dt><dd>${insp.mode === 'before_after' ? 'Before &amp; after' : 'Quality check'} · ${esc(insp.template_name)}</dd>
           <dt>Inspector</dt><dd>${esc(insp.inspector_name)}</dd>
+          ${insp.items.some((i) => i.score) ? `<dt>Overall score</dt><dd>${scorePill(+(insp.items.reduce((a, i) => a + (i.score || 0), 0) / insp.items.filter((i) => i.score).length).toFixed(1))}</dd>` : ''}
           ${insp.client_signed_at ? `<dt>Signed off</dt><dd>${fmt(insp.client_signed_at)} by ${esc(insp.client_signed_by_name)}</dd>` : ''}
         </dl>
         <div class="row" style="margin-top:12px">
@@ -45,7 +46,8 @@ export function portalViews({ api, post, esc, toast, shell, me }) {
       </section>
       ${insp.items.map((it, n) => `
         <section class="card">
-          <h2>${n + 1}. ${esc(it.label)}</h2>
+          <div class="row between"><h2>${n + 1}. ${esc(it.label)}</h2>${scorePill(it.score)}</div>
+          ${actionPlan(it, esc)}
           ${it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
           ${itemPhotos(insp, it)}
         </section>`).join('')}

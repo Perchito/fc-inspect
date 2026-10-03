@@ -128,3 +128,11 @@ alter table comments add column if not exists audience text not null default 'in
 do $$ begin
   alter table comments add constraint comments_audience_check check (audience in ('internal', 'client'));
 exception when duplicate_object then null; end $$;
+
+-- quality checks: every item scored 1-10; below 7 needs an urgent action plan
+alter table inspection_items add column if not exists score smallint check (score between 1 and 10);
+alter table inspection_items add column if not exists action_what text;
+alter table inspection_items add column if not exists action_who text;
+alter table inspection_items add column if not exists action_due date;
+alter table inspection_items add column if not exists action_done_at timestamptz;
+alter table inspection_items add column if not exists action_done_by uuid references users(id);

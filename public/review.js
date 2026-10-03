@@ -4,6 +4,21 @@ const STATUS = {
   submitted: ['To review', 'pill'], approved: ['Approved', 'pill ok'],
 };
 const FILTERS = [['submitted', 'To review'], ['returned', 'Sent back'], ['approved', 'Approved'], ['draft', 'In progress'], ['', 'All']];
+const LOW = 7;
+export const scorePill = (score) => score ? `<span class="score-pill${score < LOW ? ' low' : ''}">${score}/10</span>` : '';
+const dueText = (d) => new Date(`${d}T12:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+// one item's urgent action plan (staff only)
+export function actionPlan(it, esc, { canToggle = false, inspectionId = '' } = {}) {
+  if (!(it.score && it.score < LOW && it.action_what)) return '';
+  const overdue = !it.action_done_at && it.action_due && it.action_due < new Date().toISOString().slice(0, 10);
+  return `<div class="plan${it.action_done_at ? ' done' : overdue ? ' overdue' : ''}">
+    <strong>${it.action_done_at ? 'Action done' : overdue ? 'Action OVERDUE' : 'Urgent action'}</strong>
+    <p>${esc(it.action_what)}</p>
+    <p class="small">Who: <strong>${esc(it.action_who)}</strong> · Deadline: <strong>${it.action_due ? dueText(it.action_due) : '—'}</strong>
+      ${it.action_done_at ? ` · done ${fmt(it.action_done_at)}${it.action_done_by_name ? ` by ${esc(it.action_done_by_name)}` : ''}` : ''}</p>
+    ${canToggle ? `<button class="btn" data-done="${esc(it.item_key)}" data-insp="${inspectionId}" data-state="${it.action_done_at ? '1' : '0'}">${it.action_done_at ? 'Reopen' : 'Mark done'}</button>` : ''}
+  </div>`;
+}
 const fmt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const day = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -27,6 +42,8 @@ export function itemPhotos(insp, it, editing = false) {
 export const thread = (comments, esc) => comments.map((c) =>
   `<p class="comment"><strong>${esc(c.name)}</strong> <span class="muted small">${fmt(c.created_at)}</span><br>${esc(c.body)}</p>`).join('');
 
+const avgOf = (insp) => { const s = insp.items.map((i) => i.score).filter(Boolean); return s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
+
 export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog }) {
   async function list(status = 'submitted') {
     const rows = await api(`/admin/inspections${status ? `?status=${status}` : ''}`);
@@ -38,6 +55,7 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
         <li><a class="list-link" href="#/inspections/${i.id}">
           <span class="grow"><strong>${esc(i.site_name)}</strong> <span class="muted">· ${esc(i.client_name)}</span><br>
             <span class="muted small">${i.mode === 'before_after' ? 'Before &amp; after' : 'Quality check'} · ${esc(i.inspector_name)} · ${fmt(i.finished_at || i.started_at)} · ${i.photo_count} photos</span></span>
+          ${i.open_actions ? `<span class="pill urgent-pill">URGENT · ${i.open_actions}</span>` : ''}${scorePill(i.avg_score && +i.avg_score)}
           <span class="${STATUS[i.status][1]}">${STATUS[i.status][0]}</span>
           ${i.emailed_at ? '<span class="pill">Emailed</span>' : ''}${i.client_signed_at ? '<span class="pill ok">Client signed</span>' : ''}
         </a></li>`).join('')}</ul>`
@@ -62,6 +80,8 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
         <dl class="facts">
           <dt>Inspection</dt><dd>${ba ? 'Before &amp; after' : 'Quality check'} · ${esc(insp.template_name)}</dd>
           <dt>Inspector</dt><dd>${esc(insp.inspector_name)}</dd>
+          ${avgOf(insp) ? `<dt>Overall score</dt><dd>${scorePill(+avgOf(insp))}</dd>` : ''}
+          ${ba ? '<dt>Visibility</dt><dd>Internal — cleaners for this site can see it once approved; never shown to the client</dd>' : ''}
           <dt>Started</dt><dd>${fmt(insp.started_at)} · ${maps(insp.start_gps)}</dd>
           <dt>Finished</dt><dd>${fmt(insp.finished_at)} · ${maps(insp.end_gps)}</dd>
           ${insp.approved_at ? `<dt>Approved</dt><dd>${fmt(insp.approved_at)} by ${esc(insp.approved_by_name)}</dd>` : ''}
@@ -77,7 +97,8 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
       ${editing ? '<p class="muted small">You can tidy up notes and delete photos before approving. The client only sees the report once it\'s approved.</p>' : ''}
       ${insp.items.map((it, n) => `
         <section class="card">
-          <h2>${n + 1}. ${esc(it.label)}</h2>
+          <div class="row between"><h2>${n + 1}. ${esc(it.label)}</h2>${scorePill(it.score)}</div>
+          ${actionPlan(it, esc, { canToggle: insp.status !== 'draft', inspectionId: id })}
           ${editing ? `<label class="small">Notes<textarea data-note="${esc(it.item_key)}" rows="3">${esc(it.note)}</textarea></label>`
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
           ${photosOf(it)}
@@ -90,11 +111,12 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
           ${editing ? '<button class="btn" id="return">Send back</button><button class="btn primary" id="approve">Approve</button>' : ''}
           ${insp.status === 'approved' ? `${insp.client_signed_at ? '' : '<button class="btn" id="unapprove">Unapprove</button>'}
             <a class="btn" href="/api/inspections/${id}/pdf?download=1">Download PDF</a>
-            <button class="btn primary" id="email">${insp.emailed_at ? 'Email again' : 'Email to client'}</button>` : ''}
+            ${ba ? '' : `<button class="btn primary" id="email">`}${ba ? '' : `${insp.emailed_at ? 'Email again' : 'Email to client'}</button>`}` : ''}
         </div>
       </div>`);
 
     const reload = () => detail(id);
+    bindDone(view, reload);
     view.querySelector('#reply')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await post(`/inspections/${id}/comments`, { body: e.target.body.value }); toast('Reply posted — the client sees it in their portal'); reload(); }
@@ -143,5 +165,30 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
     });
   }
 
-  return { list, detail };
+  async function actions(done = false) {
+    const rows = await api(`/admin/actions${done ? '?done=1' : ''}`);
+    const view = shell(`
+      <div class="row between"><h1>Urgent actions</h1></div>
+      <p class="muted">Items scored below ${LOW}/10 and their action plans.</p>
+      <nav class="chips"><a href="#/actions" ${done ? '' : 'aria-current="true"'}>Open</a><a href="#/actions/done" ${done ? 'aria-current="true"' : ''}>Done</a></nav>
+      ${rows.length ? rows.map((a) => `
+        <section class="card">
+          <div class="row between"><div><strong>${esc(a.site_name)}</strong> <span class="muted">· ${esc(a.client_name)}</span><br>
+            <a href="#/inspections/${a.inspection_id}">${esc(a.label)}</a> <span class="muted small">· ${esc(a.inspector_name)} · ${fmt(a.finished_at)}</span></div>
+            ${scorePill(a.score)}</div>
+          ${actionPlan(a, esc, { canToggle: true, inspectionId: a.inspection_id })}
+        </section>`).join('') : `<p class="empty">${done ? 'Nothing marked done yet.' : 'No open urgent actions.'}</p>`}`);
+    bindDone(view, () => actions(done));
+  }
+
+  function bindDone(view, reload) {
+    view.querySelectorAll('[data-done]').forEach((b) => b.onclick = async () => {
+      try {
+        await post(`/admin/inspections/${b.dataset.insp}/items/${encodeURIComponent(b.dataset.done)}/action-done`, { done: b.dataset.state === '0' });
+        toast(b.dataset.state === '0' ? 'Marked done' : 'Reopened'); reload();
+      } catch (e) { toast(e.message, true); }
+    });
+  }
+
+  return { list, detail, actions };
 }
