@@ -97,7 +97,7 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
       ${editing ? '<p class="muted small">You can tidy up notes and delete photos before approving. The client only sees the report once it\'s approved.</p>' : ''}
       ${insp.items.map((it, n) => `
         <section class="card">
-          <div class="row between"><h2>${n + 1}. ${esc(it.label)}${it.added ? ' <span class="pill">Added on site</span>' : ''}</h2>${scorePill(it.score)}</div>
+          <div class="row between"><h2>${n + 1}. ${esc(it.label)}${it.added && insp.template_id ? ' <span class="pill">Added on site</span>' : ''}</h2>${scorePill(it.score)}</div>
           ${actionPlan(it, esc, { canToggle: insp.status !== 'draft', inspectionId: id })}
           ${editing ? `<label class="small">Notes<textarea data-note="${esc(it.item_key)}" rows="3">${esc(it.note)}</textarea></label>`
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}

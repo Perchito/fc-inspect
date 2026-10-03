@@ -186,7 +186,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       <h1>Which site?</h1>
       <input id="q" type="search" placeholder="Search sites or clients" aria-label="Search sites" autocomplete="off">
       <ul class="list" id="sites"></ul>
-      <p class="muted small">Only sites with a template are listed. Ask the office if a site is missing.</p>`);
+      <p class="muted small">Ask the office if a site is missing.</p>`);
     const $list = view.querySelector('#sites'), $q = view.querySelector('#q');
     const render = () => {
       const q = $q.value.trim().toLowerCase();
@@ -198,24 +198,38 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
     render(); $q.oninput = render;
     $list.onclick = async (e) => {
       const b = e.target.closest('[data-site]'); if (!b) return;
-      const site = sites.find((s) => s.id === b.dataset.site);
-      if (site.templates.length === 1) return chooseMode(site, site.templates[0]);
-      $list.innerHTML = `<li class="list-row"><strong>${esc(site.name)}</strong> — which checklist?</li>` + site.templates.map((t) =>
-        `<li><button class="list-link as-button" data-template="${t.id}"><span class="grow">${esc(t.name)}</span><span class="muted small">${t.item_count} items</span></button></li>`).join('');
-      $list.onclick = (ev) => { const tb = ev.target.closest('[data-template]'); if (tb) chooseMode(site, site.templates.find((t) => t.id === tb.dataset.template)); };
+      chooseMode(sites.find((s) => s.id === b.dataset.site));
     };
   }
 
-  function chooseMode(site, template) {
+  function chooseMode(site) {
+    const none = !site.templates.length;
+    const noTpl = '<span class="small warn-text">No checklist set up for this site yet — ask the office.</span>';
     const view = page(`
       <p><a href="#/inspect/new">← Back</a></p>
       <h1>What kind of inspection?</h1>
-      <p class="muted">${esc(site.name)} · ${esc(template.name)}</p>
-      <button class="card mode-pick" data-mode="check"><strong>Quality check</strong>
-        <span class="muted">Score each area 1–10 with photos and notes. Shared with the client once approved.</span></button>
-      <button class="card mode-pick" data-mode="before_after"><strong>Before &amp; after</strong>
-        <span class="muted">For deep cleans: before photos now, after photos next to each one once the clean is done. Internal — never shown to the client.</span></button>`);
-    view.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => begin(site, template, b.dataset.mode));
+      <p class="muted">${esc(site.name)} · ${esc(site.client_name)}</p>
+      <button class="card mode-pick" data-mode="check" ${none ? 'disabled' : ''}><strong>Quality check</strong>
+        <span class="muted">Score each area 1–10 with photos and notes, using the site's checklist. Shared with the client once approved.</span>${none ? noTpl : ''}</button>
+      <button class="card mode-pick" data-mode="before_after" ${none ? 'disabled' : ''}><strong>Before &amp; after</strong>
+        <span class="muted">For deep cleans, using the site's checklist: before photos now, after photos next to each one once the clean is done. Internal.</span>${none ? noTpl : ''}</button>
+      <button class="card mode-pick" data-mode="before_after" data-free><strong>Before &amp; after — no checklist</strong>
+        <span class="muted">Starts empty: add each item as you go (e.g. "Oven"), take before photos, then after photos once it's clean. Internal — never shown to the client.</span></button>`);
+    view.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => {
+      if ('free' in b.dataset) return begin(site, null, 'before_after');
+      if (site.templates.length === 1) return begin(site, site.templates[0], b.dataset.mode);
+      pickTemplate(site, b.dataset.mode);
+    });
+  }
+
+  function pickTemplate(site, mode) {
+    const view = page(`
+      <p><a href="#/inspect/new">← Back</a></p>
+      <h1>Which checklist?</h1>
+      <p class="muted">${esc(site.name)}</p>
+      <ul class="list">${site.templates.map((t) => `<li><button class="list-link as-button" data-template="${t.id}">
+        <span class="grow">${esc(t.name)}</span><span class="muted small">${t.item_count} items</span></button></li>`).join('')}</ul>`);
+    view.querySelectorAll('[data-template]').forEach((b) => b.onclick = () => begin(site, site.templates.find((t) => t.id === b.dataset.template), mode));
   }
 
   async function begin(site, template, mode) {
@@ -224,8 +238,9 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
     const start_gps = await currentGps();
     for (;;) {
       try {
-        await post('/inspections', { id, site_id: site.id, template_id: template.id, mode, start_gps, started_at });
-        location.hash = `#/inspect/${id}/1`;
+        await post('/inspections', { id, site_id: site.id, template_id: template?.id ?? null, mode, start_gps, started_at });
+        location.hash = template ? `#/inspect/${id}/1` : `#/inspect/${id}`; // no checklist: starts empty
+
         return;
       } catch (err) {
         if (err.status && err.status < 500) { toast(err.message, true); location.hash = '#/inspect'; return; }
@@ -262,6 +277,8 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       url: `/api/inspections/${insp.id}/items`, body: JSON.stringify({ key, label }), contentType: 'application/json' });
     location.hash = `#/inspect/${insp.id}/${insp.items.length}`;
   }
+  // before & after with no checklist: the inspector builds the item list on site
+  const isFree = (insp) => insp.mode === 'before_after' && !insp.template_id;
   const editable = (insp) => ['draft', 'returned'].includes(insp.status) && !insp.submitting;
   const pendingPhotos = async (id, key) => (await outbox.all()).filter((e) => e.kind === 'photo' && e.inspectionId === id && e.itemKey === key);
 
@@ -288,7 +305,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
           ? `<div class="pairs small-pairs">${photos.filter((p) => p.phase !== 'after').map((b) =>
               `<div class="pair">${img(b)}${img(photos.find((a) => a.pair_id === b.id))}</div>`).join('')}</div>` : '';
         return `<li class="card">
-          <div class="row between"><strong>${n + 1}. ${esc(it.label)} ${it.added ? '<span class="pill">Added on site</span>' : ''} ${scorePill(it)}</strong>
+          <div class="row between"><strong>${n + 1}. ${esc(it.label)} ${it.added && !isFree(insp) ? '<span class="pill">Added on site</span>' : ''} ${scorePill(it)}</strong>
             ${can ? `<a class="btn" href="#/inspect/${id}/${n + 1}">Edit</a>` : ''}</div>
           ${pairs ? pairs + (local.length ? `<p class="muted small">${local.length} photo${local.length === 1 ? '' : 's'} uploading</p>` : '')
             : photos.length + local.length ? `<div class="thumbs">${photos.map((p) => `<img src="/api/photos/${p.id}" alt="" loading="lazy">`).join('')}
@@ -296,8 +313,11 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
           ${it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
         </li>`;
       }).join('')}</ol>
-      ${can ? '<button class="btn add-item" id="add-item" type="button">+ Add an item not on the checklist</button>' : ''}
-      ${can ? `<div class="row between sticky-bar">
+      ${can && !insp.items.length ? `<section class="card empty-start center-text"><h2>No items yet</h2>
+        <p class="muted">Add the first thing you're photographing, e.g. "Oven" or "Bathroom tiles".</p></section>` : ''}
+      ${can ? `<button class="btn ${isFree(insp) ? 'primary big' : 'add-item'}" id="add-item" type="button">${isFree(insp)
+        ? (insp.items.length ? '+ Add next item' : '+ Add first item') : '+ Add an item not on the checklist'}</button>` : ''}
+      ${can && insp.items.length ? `<div class="row between sticky-bar">
           ${insp.status === 'draft' ? '<button class="btn danger" id="discard">Discard</button>' : '<span></span>'}
           <a class="btn primary" href="#/inspect/${id}/finish">Review &amp; sign</a></div>` : ''}`);
     view.querySelector('#add-item')?.addEventListener('click', () => addItem(insp));
@@ -314,7 +334,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
   // one item: photos + note. Before & after inspections show photo pairs instead of a grid.
   async function item(id, n) {
     const insp = await load(id);
-    if (!editable(insp)) { location.replace(`#/inspect/${id}`); return; }
+    if (!editable(insp) || !insp.items.length) { location.replace(`#/inspect/${id}`); return; }
     n = Math.min(Math.max(1, +n), insp.items.length);
     const it = insp.items[n - 1], last = n === insp.items.length, ba = insp.mode === 'before_after';
     watchGps();
@@ -322,7 +342,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       <div class="walk-top"><a href="#/inspect/${id}">← ${esc(insp.site_name)}</a><span class="muted small">Item ${n} of ${insp.items.length}</span></div>
       <div class="progress" aria-hidden="true"><span style="width:${(n / insp.items.length) * 100}%"></span></div>
       <h1>${esc(it.label)}</h1>
-      ${it.added ? '<p class="small"><span class="pill">Added on site</span> <button class="link-btn danger" id="remove-item" type="button">Remove this item</button></p>' : ''}
+      ${it.added ? `<p class="small">${isFree(insp) ? '' : '<span class="pill">Added on site</span> '}<button class="link-btn danger" id="remove-item" type="button">Remove this item</button></p>` : ''}
       ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
       ${ba ? '<div class="pair-head" aria-hidden="true"><span>Before</span><span>After</span></div>' : ''}
       <div class="${ba ? 'pairs' : 'thumbs big'}" id="thumbs"></div>
@@ -343,7 +363,8 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
         <label>Deadline<input type="date" data-f="action_due" value="${esc(it.action_due)}" min="${new Date().toISOString().slice(0, 10)}"></label>
       </section>`}
       <p class="error small" id="missing" role="alert" hidden></p>
-      <button class="btn add-item" id="add-item" type="button">+ Add an item not on the checklist</button>
+      ${isFree(insp) ? '<button class="btn primary big" id="add-item" type="button">+ Add next item</button>'
+        : '<button class="btn add-item" id="add-item" type="button">+ Add an item not on the checklist</button>'}
       ${gpsDenied ? '<p class="small warn-text">Location is off — the report will show no GPS. Allow location for this site in your browser settings.</p>' : ''}
       <div class="row between sticky-bar">
         ${n > 1 ? `<a class="btn" href="#/inspect/${id}/${n - 1}">← Previous</a>` : '<span></span>'}
@@ -478,6 +499,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       + pending.filter((p) => p.itemKey === it.item_key).length);
     const empty = insp.items.filter((it, i) => !counts[i] && !it.note.trim());
     const allPhotos = [...insp.photos, ...pending.map((e) => ({ id: e.id, phase: e.phase, pair_id: e.pairId }))];
+    if (!insp.items.length) { location.replace(`#/inspect/${id}`); return; }
     const problems = insp.items.map((it, i) => [i, itemProblem(it, insp.mode)]).filter(([, p]) => p);
     const noAfter = insp.mode === 'before_after'
       ? allPhotos.filter((b) => b.phase === 'before' && !allPhotos.some((a) => a.phase === 'after' && a.pair_id === b.id)).length : 0;

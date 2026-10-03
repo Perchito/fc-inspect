@@ -206,3 +206,5 @@ dialog textarea { min-height: 140px; }
 .add-item { display: block; width: 100%; margin-top: 16px; border-style: dashed; color: var(--blue); }
 .link-btn { background: none; border: none; padding: 4px; font: inherit; text-decoration: underline; cursor: pointer; color: var(--blue); min-height: 32px; }
 .link-btn.danger { color: var(--error); }
+.mode-pick:disabled { opacity: .55; cursor: not-allowed; }
+.empty-start { border-style: dashed; }
