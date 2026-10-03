@@ -5,6 +5,7 @@ import {
   SESSION_DAYS, verifyPassword, newToken, tokenHash, readCookie,
   loginBlocked, loginFailed, loginOk,
 } from './lib/auth.mjs';
+import { adminRoutes } from './lib/admin.mjs';
 
 const { DATABASE_URL, PORT = 4620 } = process.env;
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -64,6 +65,7 @@ app.post('/api/logout', async (req, res) => {
 });
 
 app.get('/api/me', requireUser(), (req, res) => res.json(req.user));
+app.use('/api/admin', requireUser('admin'), adminRoutes(pool));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -74,7 +76,15 @@ const indexHtml = readFileSync('public/index.html', 'utf8').replaceAll('__V__', 
 app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(indexHtml));
 app.use(express.static('public', { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
+// Postgres errors that are the caller's fault, in plain words
+const PG_ERRORS = {
+  '22P02': [400, 'Invalid id'],
+  '23503': [409, 'This is still linked to other records (e.g. inspections), so it was left as it is'],
+  '23505': [409, 'That email is already used by another account'],
+};
 app.use((err, req, res, next) => {
+  if (err.status === 400) return res.status(400).json({ error: err.message });
+  if (PG_ERRORS[err.code]) { const [status, error] = PG_ERRORS[err.code]; return res.status(status).json({ error }); }
   console.error(err);
   res.status(500).json({ error: 'Server error' });
 });
