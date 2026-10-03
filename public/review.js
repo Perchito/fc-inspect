@@ -11,9 +11,9 @@ const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); re
 // photos of one item: a grid, or before/after pairs (server photos only)
 export function itemPhotosHtml(insp, it) {
   const ps = insp.photos.filter((p) => p.item_key === it.item_key);
-  if (!ps.length) return '<p class="muted small">No photos</p>';
+  if (!ps.length) return '';
   const fig = (p, label) => p ? `<figure class="ph"><button class="ph-open" data-view="${p.id}" aria-label="View ${label}">
-    <img src="/api/photos/${p.id}" alt="${label}" loading="lazy" decoding="async"></button></figure>` : '<div class="after-slot muted">—</div>';
+    <img src="/api/photos/${p.id}" alt="${label}" loading="lazy" decoding="async"></button></figure>` : '<div class="ph-blank" aria-hidden="true"></div>'; // missing photo: plain white
   if (insp.mode !== 'before_after') return `<div class="ph-grid">${ps.map((p) => fig(p, 'photo')).join('')}</div>`;
   const befores = ps.filter((p) => p.phase !== 'after');
   const orphans = ps.filter((p) => p.phase === 'after' && !befores.some((b) => b.id === p.pair_id));

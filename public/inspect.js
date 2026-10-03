@@ -402,7 +402,7 @@ export function inspectViews({ shell, me }) {
         const a = afterOf(b);
         return `<div class="pair">${head}${fig(b, 'Before photo')}${a ? fig(a, 'After photo') : `<label class="after-slot">${icon('camera')}<span>Take after photo</span>
             <input type="file" accept="image/*" hidden data-pair="${b.id}"></label>`}</div>`;
-      }).join('')}${orphans.map((a) => `<div class="pair">${head}<div class="after-slot muted">—</div>${fig(a, 'After photo')}</div>`).join('')}</div>`
+      }).join('')}${orphans.map((a) => `<div class="pair">${head}<div class="ph-blank" aria-hidden="true"></div>${fig(a, 'After photo')}</div>`).join('')}</div>`
         : `<div class="ph-empty">${icon('camera')}<span>Take the before photos now. After the clean, come back and add an after photo next to each one.</span></div>`;
     };
     render();
