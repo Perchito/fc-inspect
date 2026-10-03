@@ -70,8 +70,8 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
           ${photosOf(it)}
         </section>`).join('')}
-      ${insp.inspector_sig ? `<section class="card"><h2>Inspector signature</h2><img class="sig-img" src="${insp.inspector_sig}" alt="Signature of ${esc(insp.inspector_name)}"></section>` : ''}
-      ${insp.client_sig ? `<section class="card"><h2>Client sign-off</h2><img class="sig-img" src="${insp.client_sig}" alt="Client signature"></section>` : ''}
+      ${insp.inspector_sig ? `<section class="card"><h2>Inspector signature</h2><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}"></section>` : ''}
+      ${insp.client_sig ? `<section class="card"><h2>Client sign-off</h2><img class="sig-img" src="${esc(insp.client_sig)}" alt="Client signature"></section>` : ''}
       <div class="row between sticky-bar review-bar">
         <a class="btn" href="/api/inspections/${id}/pdf" target="_blank" rel="noopener">${insp.status === 'approved' ? 'View PDF' : 'Preview PDF'}</a>
         <div class="row">
