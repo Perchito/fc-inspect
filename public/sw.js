@@ -1,28 +1,41 @@
-// FC Inspect service worker: network first for the app's own files, falling back to
-// the last copy so the app still opens with no signal. API calls are never cached
-// (unsent photos/notes live in IndexedDB, see outbox in inspect.js).
-const CACHE = 'fci-shell';
+// FC Inspect service worker.
+// - App files: network first, last copy when offline, so the app opens with no signal.
+// - API reads (GET /api/...): network first, cached copy when offline, so lists and inspections
+//   already seen still open. Writes never touch the cache — unsent work lives in the IndexedDB outbox.
+// - Photos never change once taken: cache first.
+// The app deletes the API + photo caches on logout.
+const SHELL = 'fci-shell', API = 'fci-api', PHOTOS = 'fci-photos';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
-  e.respondWith((async () => {
-    const cache = await caches.open(CACHE);
-    try {
-      const res = await fetch(e.request);
-      if (res.ok) {
-        // keep only the newest ?v= copy of each file
-        for (const old of await cache.keys()) {
-          if (new URL(old.url).pathname === url.pathname && old.url !== e.request.url) cache.delete(old);
-        }
-        cache.put(e.request, res.clone());
+async function networkFirst(req, cacheName, { prune = false } = {}) {
+  const cache = await caches.open(cacheName);
+  try {
+    const res = await fetch(req);
+    if (res.ok) {
+      if (prune) { // keep only the newest ?v= copy of each app file
+        const path = new URL(req.url).pathname;
+        for (const old of await cache.keys()) if (new URL(old.url).pathname === path && old.url !== req.url) cache.delete(old);
       }
-      return res;
-    } catch {
-      return (await cache.match(e.request)) || (e.request.mode === 'navigate' && (await cache.match('/'))) || Response.error();
+      cache.put(req, res.clone());
     }
-  })());
+    return res;
+  } catch {
+    return (await cache.match(req)) || (req.mode === 'navigate' && (await caches.open(SHELL).then((c) => c.match('/')))) || Response.error();
+  }
+}
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request, url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/api/photos/')) {
+    e.respondWith(caches.open(PHOTOS).then(async (c) => (await c.match(req)) || fetch(req).then((res) => { if (res.ok) c.put(req, res.clone()); return res; })));
+  } else if (url.pathname.endsWith('/pdf')) {
+    return; // always fresh
+  } else if (url.pathname.startsWith('/api/')) {
+    e.respondWith(networkFirst(req, API));
+  } else {
+    e.respondWith(networkFirst(req, SHELL, { prune: true }));
+  }
 });

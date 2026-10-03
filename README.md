@@ -1,14 +1,19 @@
 # FC Inspect
 
 Cleaning quality inspections for FC Cleaning Company: a phone-first PWA for supervisors plus an admin back office.
+Installed on an iPhone it behaves like a native app: bottom tabs (Home · Inspections · Actions · More), a guided
+start flow, one-item-at-a-time inspections with large touch targets, and a desktop layout with a sidebar.
 
 - **Quality checks** — walk a site's checklist, photos + notes per item, score 1–10; anything below 7 needs an urgent action plan (what, who, deadline)
 - **Before & after** — paired before/after photos per item, from a checklist or starting empty and adding items as you go
 - **Admin** — review, edit, approve or send back; track urgent actions; PDF reports with or without notes
 - Every submitted inspection is emailed to the admins with the PDF attached (marked URGENT on low scores)
-- Works on a weak signal: photos, notes and submits queue on the phone and upload when the connection returns
+- Works offline: inspections can be started, completed and submitted with no signal — everything queues on the phone (IndexedDB) and syncs when the connection returns; screens already seen open offline too
 
-Stack: Node + Express 5, Postgres, plain JS front end (no build step), pdfkit for reports, nodemailer for email.
+Stack: Node + Express 5, Postgres, plain JS ES modules front end (no framework, no build step), pdfkit for reports, nodemailer for email.
+
+Front end (`public/`): `ui.js` design system + components · `app.js` shell, router, More/Sync · `inspect.js` outbox + supervisor
+workflow · `lists.js` Home/Inspections/Actions · `review.js` report + admin review · `admin.js` clients, templates, team.
 
 ## Run locally
 

@@ -1,367 +1,240 @@
+// FC Inspect app shell: login, header + bottom tabs (desktop sidebar), router, More / Sync / About.
+import { esc, icon, api, post, toast, avatar, row, errorState, skeleton, relDay } from './ui.js?v=__V__';
+import { inspectViews, loadInspection, editable, sync, outbox, flush, clearSyncError, forgetCurrent } from './inspect.js?v=__V__';
+import { reportViews } from './review.js?v=__V__';
+import { listViews } from './lists.js?v=__V__';
+import { adminViews } from './admin.js?v=__V__';
+
+const VERSION = '__V__';
 const $app = document.getElementById('app');
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-
-async function api(path, { method = 'GET', body } = {}) {
-  const r = await fetch(`/api${path}`, body === undefined ? { method } : {
-    method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(data.error || r.statusText), { status: r.status });
-  return data;
-}
-const post = (path, body = {}) => api(path, { method: 'POST', body });
-const put = (path, body) => api(path, { method: 'PUT', body });
-const del = (path) => api(path, { method: 'DELETE' });
-
-const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor', cleaner: 'Cleaner', client: 'Client' };
-// for now only admins and supervisors log in (no client/cleaner portal); reports go to clients as emailed PDFs
-const ACTIVE_ROLES = ['admin', 'inspector'];
+const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor' };
 let me = null;
+const isAdmin = () => me?.role === 'admin';
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+document.documentElement.classList.toggle('standalone', !!standalone);
 
-// ── small UI helpers ────────────────────────────────────
-function toast(msg, isError = false) {
-  const t = document.createElement('div');
-  t.className = `toast${isError ? ' error-bg' : ''}`;
-  t.setAttribute('role', 'status');
-  t.textContent = msg;
-  document.body.append(t);
-  setTimeout(() => t.remove(), 3500);
+// ── sync pill (header) ──────────────────────────────────
+function syncInfo(s = sync) {
+  const n = s.pending.length;
+  if (!navigator.onLine) return { tone: 'off', ic: 'offline', text: n ? `Offline · ${n}` : 'Offline' };
+  if (s.error) return { tone: 'bad', ic: 'alert', text: 'Sync problem' };
+  if (n && s.flushing) return { tone: 'busy', ic: 'sync', text: `Syncing ${n}` };
+  if (n) return { tone: 'wait', ic: 'clock', text: `${n} waiting` };
+  return { tone: 'ok', ic: 'check', text: 'Synced' };
 }
+const pillHtml = () => { const s = syncInfo(); return `<a class="sync-pill ${s.tone}" id="sync-pill" href="#/sync" aria-label="Sync status: ${s.text}">${icon(s.ic, s.tone === 'busy' ? 'spin' : '')}<span>${s.text}</span></a>`; };
+outbox.onChange(() => { const el = document.getElementById('sync-pill'); if (el) el.outerHTML = pillHtml(); });
 
-// Native <dialog> form. fields: [{name, label, type, value, required, options:[{value,label}], hidden}]
-// Resolves with the values, or null if cancelled. onSubmit may throw to keep the dialog open.
-function formDialog({ title, fields, submitLabel = 'Save', onSubmit, onChange }) {
-  return new Promise((resolve) => {
-    const d = document.createElement('dialog');
-    const field = (f) => {
-      const id = `f_${f.name}`;
-      if (f.type === 'checks') {
-        return `<fieldset class="checks" data-field="${f.name}"><legend>${esc(f.label)}</legend>
-          ${f.options.length ? f.options.map((o) => `<label class="check"><input type="checkbox" name="${f.name}" value="${esc(o.value)}"
-            ${(f.value || []).includes(o.value) ? 'checked' : ''}> ${esc(o.label)}</label>`).join('') : `<p class="muted small">${esc(f.empty || 'None yet')}</p>`}
-        </fieldset>`;
-      }
-      const input = f.type === 'select'
-        ? `<select id="${id}" name="${f.name}" ${f.required ? 'required' : ''}>${f.options.map((o) =>
-            `<option value="${esc(o.value)}" ${o.value === f.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`
-        : f.type === 'textarea'
-          ? `<textarea id="${id}" name="${f.name}" rows="3">${esc(f.value)}</textarea>`
-          : `<input id="${id}" name="${f.name}" type="${f.type || 'text'}" value="${esc(f.value)}" ${f.required ? 'required' : ''}>`;
-      return `<label for="${id}" data-field="${f.name}" ${f.hidden ? 'hidden' : ''}>${esc(f.label)}${input}</label>`;
-    };
-    d.innerHTML = `<form method="dialog" class="stack">
-        <h2>${esc(title)}</h2>
-        <p class="error" role="alert" hidden></p>
-        ${fields.map(field).join('')}
-        <div class="row end"><button type="button" class="btn" value="cancel">Cancel</button>
-        <button class="btn primary">${esc(submitLabel)}</button></div>
-      </form>`;
-    document.body.append(d);
-    const form = d.querySelector('form'), err = d.querySelector('.error');
-    const values = () => Object.fromEntries(fields.map((f) => [f.name, f.type === 'checks'
-      ? [...form.querySelectorAll(`input[name="${f.name}"]:checked`)].map((i) => i.value)
-      : form.elements[f.name].value]));
-    const close = (v) => { d.close(); d.remove(); resolve(v); };
-    form.querySelector('[value=cancel]').onclick = () => close(null);
-    d.addEventListener('cancel', (e) => { e.preventDefault(); close(null); });
-    if (onChange) { form.addEventListener('change', () => onChange(values(), form)); onChange(values(), form); }
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const v = values(), btn = form.querySelector('.btn.primary');
-      btn.disabled = true;
-      try { close(onSubmit ? await onSubmit(v) : v); }
-      catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
-    };
-    d.showModal();
-    form.querySelector('input:not([type=checkbox]), select, textarea')?.focus();
-  });
-}
-
-async function confirmDialog(message, okLabel = 'Delete') {
-  return !!(await formDialog({ title: message, fields: [], submitLabel: okLabel }));
-}
-
-function showPassword(user) {
-  return formDialog({
-    title: `Login for ${user.email}`, submitLabel: 'Done',
-    fields: [{ name: 'password', label: 'Password — shown once, send it to them securely', value: user.password }],
-  });
+// ── shell ───────────────────────────────────────────────
+const TABS = [['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'], ['more', '#/more', 'more', 'More']];
+const SIDE = () => [
+  ['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'],
+  ...(isAdmin() ? [['clients', '#/clients', 'building', 'Clients'], ['templates', '#/templates', 'template', 'Templates'], ['users', '#/users', 'users', 'Team']] : []),
+  ['sync', '#/sync', 'sync', 'Sync'], ['more', '#/more', 'more', 'More'],
+];
+let currentTab = 'home';
+// renders the frame and returns the content element. focus = full-screen task (no tab bar on phones)
+function shell({ title = '', subtitle = '', back = '', tab, focus = false, body = '', action = null }) {
+  if (tab) currentTab = tab;
+  const here = location.hash.split('?')[0];
+  const sideOn = (k) => here.startsWith(`#/${k}`) || (k === currentTab && !SIDE().some(([s]) => here.startsWith(`#/${s}`)));
+  $app.innerHTML = `
+    <div class="app${focus ? ' focus' : ''}">
+      <aside class="sidebar" aria-label="Main">
+        <div class="brand"><img src="/img/fc-logo-white-icon.png" alt=""><span>FC Inspect</span></div>
+        <a class="btn primary block" href="#/start">${icon('plus')} Start inspection</a>
+        <nav>${SIDE().map(([k, href, ic, label]) => `<a href="${href}" ${sideOn(k) ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
+        <a class="side-user" href="#/more">${avatar(me.name, 'light')}<span><strong>${esc(me.name)}</strong><small>${ROLE_LABEL[me.role] || me.role}</small></span></a>
+      </aside>
+      <div class="main">
+        <header class="top">
+          ${back ? `<a class="icon-btn back" href="${back}" aria-label="Back">${icon('back')}</a>` : ''}
+          <div class="titles">${title ? `<h1>${esc(title)}</h1>` : ''}${subtitle ? `<p>${esc(subtitle)}</p>` : ''}</div>
+          ${pillHtml()}
+          ${action ? (action.href ? `<a class="icon-btn accent" href="${action.href}" aria-label="${esc(action.label)}">${icon(action.icon)}</a>`
+            : `<button class="icon-btn accent" id="${action.id}" aria-label="${esc(action.label)}">${icon(action.icon)}</button>`) : ''}
+        </header>
+        <main id="view" class="view" tabindex="-1">${body}</main>
+      </div>
+      ${focus ? '' : `<nav class="tabbar" aria-label="Main">${TABS.map(([k, href, ic, label]) =>
+        `<a href="${href}" ${currentTab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>`}
+    </div>`;
+  return document.getElementById('view');
 }
 
 // ── login ───────────────────────────────────────────────
 function showLogin(error = '') {
   $app.innerHTML = `
-    <form class="card login" id="login">
-      <img src="/img/fc-logo-black-icon.png" alt="" class="logo">
-      <h1>FC Inspect</h1>
-      <p class="muted">FC Cleaning Company quality inspections</p>
-      ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ''}
-      <label>Email <input name="email" type="email" autocomplete="username" required></label>
-      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-      <button class="btn primary">Log in</button>
-    </form>`;
+    <div class="login-screen">
+      <form class="login" id="login">
+        <img src="/img/icon-192.png" alt="" class="login-logo">
+        <h1>FC Inspect</h1>
+        <p class="muted">Cleaning quality inspections<br>FC Cleaning Company</p>
+        ${error ? `<p class="form-error" role="alert">${esc(error)}</p>` : ''}
+        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" inputmode="email" required></label>
+        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary block lg">Log in</button>
+      </form>
+    </div>`;
   const form = document.getElementById('login');
-  form.email.focus();
+  if (!matchMedia('(pointer: coarse)').matches) form.email.focus();
   form.onsubmit = async (e) => {
     e.preventDefault();
-    form.querySelector('button').disabled = true;
+    const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = 'Logging in…';
     try { await post('/login', { email: form.email.value, password: form.password.value }); start(); }
-    catch (err) { showLogin(err.message); }
+    catch (err) { showLogin(err.offline ? "You're offline — connect to log in." : err.message); }
   };
 }
-
-// ── shell ───────────────────────────────────────────────
-const ADMIN_NAV = [['#/inspections', 'Inspections'], ['#/actions', 'Actions'], ['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users'], ['#/inspect', 'Inspect']];
-
-function shell(content) {
-  const nav = me.role === 'admin'
-    ? `<nav class="tabs">${ADMIN_NAV.map(([href, label]) =>
-        `<a href="${href}" ${location.hash === href || location.hash.startsWith(`${href}/`) ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>` : '';
-  $app.innerHTML = `
-    <header class="top">
-      <img src="/img/fc-logo-white-icon.png" alt="" class="logo-sm">
-      <strong>FC Inspect</strong>
-      <span class="spacer"></span>
-      <span class="who">${esc(me.name)} · ${ROLE_LABEL[me.role]}</span>
-      <span id="sync" class="sync" role="status" hidden></span>
-      <button class="btn ghost" id="logout">Log out</button>
-    </header>
-    ${nav}
-    <div id="view">${content}</div>`;
-  document.getElementById('logout').onclick = async () => { await post('/logout'); me = null; showLogin(); };
-  return document.getElementById('view');
+async function logout() {
+  if (sync.pending.length && !confirm(`${sync.pending.length} change(s) haven't been sent yet. They stay on this phone and send after you log in again. Log out?`)) return;
+  await post('/logout').catch(() => {});
+  try { await caches.delete('fci-api'); await caches.delete('fci-photos'); } catch {}
+  me = null; forgetCurrent(); history.replaceState(null, '', '/'); showLogin();
 }
 
-// ── admin: clients ──────────────────────────────────────
-const clientFields = (c = {}) => [
-  { name: 'name', label: 'Business name', value: c.name, required: true },
-  { name: 'contact_name', label: 'Contact name', value: c.contact_name },
-  { name: 'email', label: 'Email', type: 'email', value: c.email },
-  { name: 'phone', label: 'Phone', type: 'tel', value: c.phone },
-];
-
-async function viewClients() {
-  const clients = await api('/admin/clients');
-  const view = shell(`
-    <div class="row between"><h1>Clients</h1><button class="btn primary" id="add">Add client</button></div>
-    ${clients.length ? `<ul class="list">${clients.map((c) => `
-      <li><a href="#/clients/${c.id}" class="list-link">
-        <strong>${esc(c.name)}</strong>
-        <span class="muted">${esc([c.contact_name, c.email].filter(Boolean).join(' · '))}</span>
-        <span class="pill">${c.site_count} site${c.site_count === 1 ? '' : 's'}</span>
-      </a></li>`).join('')}</ul>`
-      : '<p class="empty">No clients yet. Add your first client, then their sites.</p>'}`);
-  view.querySelector('#add').onclick = async () => {
-    const c = await formDialog({ title: 'Add client', fields: clientFields(), onSubmit: (v) => post('/admin/clients', v) });
-    if (c) location.hash = `#/clients/${c.id}`;
-  };
+// ── More / Sync / About ─────────────────────────────────
+function more() {
+  const view = shell({ title: 'More', tab: 'more' });
+  view.innerHTML = `
+    <section class="card media profile">${avatar(me.name, 'navy lg')}
+      <span class="grow"><strong>${esc(me.name)}</strong><small>${esc(me.email)}</small><span class="tags"><span class="badge ${isAdmin() ? 'blue' : 'neutral'}">${ROLE_LABEL[me.role]}</span></span></span></section>
+    ${isAdmin() ? `<h3 class="section-h">Management</h3><div class="list-card">
+      ${row({ href: '#/clients', ic: 'building', title: 'Clients & sites', sub: 'Who you clean for and where' })}
+      ${row({ href: '#/templates', ic: 'template', title: 'Templates', sub: 'Inspection checklists' })}
+      ${row({ href: '#/users', ic: 'users', title: 'Team', sub: 'Admins and supervisors' })}</div>` : ''}
+    <h3 class="section-h">App</h3><div class="list-card">
+      ${row({ href: '#/sync', ic: 'sync', title: 'Offline & sync', sub: syncInfo().text })}
+      ${row({ href: '#/about', ic: 'info', title: 'About FC Inspect', sub: 'Version, notifications, help' })}</div>
+    ${standalone ? '' : `<div class="note-box"><strong>${icon('sparkle', 'inline')} Install the app</strong>
+      <p class="small">On iPhone: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>. It opens full screen and works offline.</p></div>`}
+    <div class="list-card">${row({ ic: 'logout', title: 'Log out', danger: true, id: 'logout' })}</div>`;
+  view.querySelector('#logout').onclick = logout;
 }
 
-async function viewClient(id) {
-  const [clients, sites, templates] = await Promise.all([
-    api('/admin/clients'), api(`/admin/sites?client_id=${id}`), api('/admin/templates')]);
-  const client = clients.find((c) => c.id === id);
-  if (!client) { location.hash = '#/clients'; return; }
-  const tName = Object.fromEntries(templates.map((t) => [t.id, t.name]));
-
-  const view = shell(`
-    <p><a href="#/clients">← All clients</a></p>
-    <section class="card">
-      <div class="row between"><h1>${esc(client.name)}</h1>
-        <div class="row"><button class="btn" id="edit">Edit</button><button class="btn danger" id="delete">Delete</button></div></div>
-      <p class="muted">${esc([client.contact_name, client.email, client.phone].filter(Boolean).join(' · ') || 'No contact details')}</p>
-    </section>
-    <div class="row between"><h2>Sites</h2><button class="btn primary" id="add-site">Add site</button></div>
-    ${sites.length ? sites.map((s) => `
-      <section class="card site">
-        <div class="row between"><div><strong>${esc(s.name)}</strong><div class="muted">${esc(s.address || '')}</div></div>
-          <div class="row"><button class="btn" data-edit-site="${s.id}">Edit</button><button class="btn danger" data-del-site="${s.id}">Delete</button></div></div>
-        <p class="small"><span class="label">Templates</span> ${s.template_ids.map((t) => `<span class="pill">${esc(tName[t])}</span>`).join('') || '<span class="muted">none — only a no-checklist before &amp; after is possible here</span>'}</p>
-      </section>`).join('') : '<p class="empty">No sites yet.</p>'}`);
-
-  const siteFields = (s = {}) => [
-    { name: 'name', label: 'Site name', value: s.name, required: true },
-    { name: 'address', label: 'Address', type: 'textarea', value: s.address },
-    { name: 'template_ids', label: 'Templates used at this site', type: 'checks', value: s.template_ids,
-      options: templates.map((t) => ({ value: t.id, label: t.name })), empty: 'No templates yet — create one on the Templates tab.' },
-  ];
-  const reload = () => viewClient(id);
-  view.querySelector('#edit').onclick = async () => {
-    if (await formDialog({ title: 'Edit client', fields: clientFields(client), onSubmit: (v) => put(`/admin/clients/${id}`, v) })) reload();
-  };
-  view.querySelector('#delete').onclick = async () => {
-    if (!(await confirmDialog(`Delete ${client.name} and its sites?`))) return;
-    try { await del(`/admin/clients/${id}`); location.hash = '#/clients'; } catch (e) { toast(e.message, true); }
-  };
-  view.querySelector('#add-site').onclick = async () => {
-    if (await formDialog({ title: 'Add site', fields: siteFields(), onSubmit: (v) => post('/admin/sites', { ...v, client_id: id }) })) reload();
-  };
-  view.querySelectorAll('[data-edit-site]').forEach((b) => b.onclick = async () => {
-    const s = sites.find((x) => x.id === b.dataset.editSite);
-    if (await formDialog({ title: 'Edit site', fields: siteFields(s), onSubmit: (v) => put(`/admin/sites/${s.id}`, v) })) reload();
-  });
-  view.querySelectorAll('[data-del-site]').forEach((b) => b.onclick = async () => {
-    const s = sites.find((x) => x.id === b.dataset.delSite);
-    if (!(await confirmDialog(`Delete site ${s.name}?`))) return;
-    try { await del(`/admin/sites/${s.id}`); reload(); } catch (e) { toast(e.message, true); }
-  });
-}
-
-// ── admin: templates ────────────────────────────────────
-async function viewTemplates() {
-  const templates = await api('/admin/templates');
-  const view = shell(`
-    <div class="row between"><h1>Templates</h1><button class="btn primary" id="add">New template</button></div>
-    <p class="muted">A template is the checklist a supervisor walks through: one photo-and-notes step per item.</p>
-    ${templates.length ? `<ul class="list">${templates.map((t) => `
-      <li><a href="#/templates/${t.id}" class="list-link"><strong>${esc(t.name)}</strong>
-        <span class="muted">${t.items.length} item${t.items.length === 1 ? '' : 's'}</span>
-        <span class="pill">${t.site_count} site${t.site_count === 1 ? '' : 's'}</span></a></li>`).join('')}</ul>`
-      : '<p class="empty">No templates yet.</p>'}`);
-  view.querySelector('#add').onclick = async () => {
-    const t = await formDialog({ title: 'New template', fields: [{ name: 'name', label: 'Template name', required: true }],
-      submitLabel: 'Create', onSubmit: (v) => post('/admin/templates', { name: v.name, items: [] }) });
-    if (t) location.hash = `#/templates/${t.id}`;
-  };
-}
-
-async function viewTemplate(id) {
-  const t = (await api('/admin/templates')).find((x) => x.id === id);
-  if (!t) { location.hash = '#/templates'; return; }
-  const items = t.items.map((i) => ({ ...i }));
-  let dirty = false;
-  const view = shell(`
-    <p><a href="#/templates">← All templates</a></p>
-    <section class="card stack">
-      <label>Template name <input id="tname" value="${esc(t.name)}"></label>
-      <p class="muted small">Used at ${t.site_count} site${t.site_count === 1 ? '' : 's'}. Edits apply to new inspections only — finished reports keep the items they had.</p>
-      <ol id="items" class="items"></ol>
-      <button class="btn" id="add-item">+ Add item</button>
-      <div class="row between"><button class="btn danger" id="delete">Delete template</button>
-        <button class="btn primary" id="save">Save</button></div>
-    </section>`);
-  const $items = view.querySelector('#items');
+function syncScreen() {
+  const view = shell({ title: 'Offline & sync', back: '#/more', tab: 'more' });
   const render = () => {
-    $items.innerHTML = items.map((it, i) => `
-      <li class="item">
-        <div class="stack grow">
-          <input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="e.g. Kitchen surfaces" aria-label="Item ${i + 1} name">
-          <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the supervisor (optional)" aria-label="Item ${i + 1} hint" class="small">
-        </div>
-        <div class="item-tools">
-          <button class="btn icon" data-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
-          <button class="btn icon" data-move="${i}" data-dir="1" ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
-          <button class="btn icon danger" data-remove="${i}" aria-label="Remove item">✕</button>
-        </div>
-      </li>`).join('') || '<li class="empty">No items yet — add the areas to check, e.g. Reception, Kitchen, Toilets.</li>';
+    if (!document.body.contains(view)) return off();
+    const s = syncInfo(), byKind = (k) => sync.pending.filter((e) => e.kind === k).length;
+    view.innerHTML = `
+      <section class="card sync-hero ${s.tone}"><span class="card-ic xl">${icon(s.ic, s.tone === 'busy' ? 'spin' : '')}</span>
+        <h2>${navigator.onLine ? (sync.pending.length ? (sync.flushing ? 'Syncing…' : 'Waiting to sync') : 'All synced') : "You're offline"}</h2>
+        <p class="muted">${navigator.onLine ? (sync.pending.length ? 'Your changes are being sent to the office.' : 'Everything on this phone has reached the office.')
+          : 'Keep working. Changes are stored on this phone and sync automatically when the connection returns.'}</p></section>
+      ${sync.error ? `<section class="card warn-card" role="alert"><h3>${icon('alert')} Sync problem</h3><p>${esc(sync.error)}</p>
+        <button class="btn sm" id="dismiss">Dismiss</button></section>` : ''}
+      <div class="stats">
+        <div class="stat"><span>Connection</span><strong>${navigator.onLine ? 'Online' : 'Offline'}</strong></div>
+        <div class="stat"><span>Last synced</span><strong>${sync.lastSynced ? esc(relDay(sync.lastSynced).replace('Today · ', '')) : '—'}</strong></div>
+        <div class="stat ${byKind('photo') ? 'warn' : ''}"><span>Photos waiting</span><strong>${byKind('photo')}</strong></div>
+        <div class="stat"><span>Other changes</span><strong>${sync.pending.length - byKind('photo')}</strong></div>
+        <div class="stat"><span>Inspections affected</span><strong>${new Set(sync.pending.map((e) => e.inspectionId)).size}</strong></div>
+        <div class="stat"><span>Submissions waiting</span><strong>${byKind('submit')}</strong></div>
+      </div>
+      <button class="btn primary block lg" id="now" ${navigator.onLine && sync.pending.length && !sync.flushing ? '' : 'disabled'}>${icon('sync')} Sync now</button>
+      <p class="muted small center-text">Photos, notes, scores and submissions stay safely on this phone until the office has them — nothing is lost if the signal drops.</p>`;
+    view.querySelector('#now').onclick = () => { flush(); toast('Syncing…'); };
+    view.querySelector('#dismiss')?.addEventListener('click', clearSyncError);
   };
+  const off = outbox.onChange(render);
   render();
-  $items.addEventListener('input', (e) => { const { i, k } = e.target.dataset; if (k) { items[i][k] = e.target.value; dirty = true; } });
-  $items.addEventListener('click', (e) => {
-    const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.remove) items.splice(+b.dataset.remove, 1);
-    if (b.dataset.move) { const i = +b.dataset.move, j = i + +b.dataset.dir; [items[i], items[j]] = [items[j], items[i]]; }
-    dirty = true; render();
-  });
-  view.querySelector('#tname').oninput = () => { dirty = true; };
-  view.querySelector('#add-item').onclick = () => {
-    items.push({ label: '', hint: '' }); dirty = true; render();
-    $items.querySelector(`[data-i="${items.length - 1}"][data-k=label]`).focus();
-  };
-  view.querySelector('#save').onclick = async () => {
-    try {
-      const saved = await put(`/admin/templates/${id}`, { name: view.querySelector('#tname').value, items: items.filter((i) => i.label.trim()) });
-      items.splice(0, items.length, ...saved.items); dirty = false; render(); toast('Template saved');
-    } catch (e) { toast(e.message, true); }
-  };
-  view.querySelector('#delete').onclick = async () => {
-    if (!(await confirmDialog(`Delete template ${t.name}? Sites using it will lose it.`))) return;
-    try { await del(`/admin/templates/${id}`); dirty = false; location.hash = '#/templates'; } catch (e) { toast(e.message, true); }
-  };
-  leaveGuard = () => !dirty || confirm('You have unsaved changes to this template. Leave anyway?');
 }
 
-// ── admin: users ────────────────────────────────────────
-async function viewUsers() {
-  const users = await api('/admin/users');
-  const view = shell(`
-    <div class="row between"><h1>Users</h1><button class="btn primary" id="add">Add user</button></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
-      <tbody>${users.map((u) => `
-        <tr class="${u.active ? '' : 'inactive'}">
-          <td>${esc(u.name)}${u.id === me.id ? ' <span class="muted">(you)</span>' : ''}</td>
-          <td>${esc(u.email)}</td>
-          <td>${ROLE_LABEL[u.role]}${u.client_name ? ` · ${esc(u.client_name)}` : ''}${u.active ? '' : ' <span class="pill">inactive</span>'}</td>
-          <td class="actions"><button class="btn" data-edit="${u.id}">Edit</button>
-            <button class="btn" data-reset="${u.id}">Reset password</button></td>
-        </tr>`).join('')}</tbody>
-    </table></div>`);
-  const roleOptions = (role) => [...new Set([...ACTIVE_ROLES, role].filter(Boolean))].map((value) => ({ value, label: ROLE_LABEL[value] }));
-  const userFields = (u = {}) => [
-    { name: 'name', label: 'Name', value: u.name, required: true },
-    { name: 'email', label: 'Email', type: 'email', value: u.email, required: true },
-    { name: 'role', label: 'Role', type: 'select', value: u.role || 'inspector', options: roleOptions(u.role) },
-    ...(u.id ? [{ name: 'active', label: 'Status', type: 'select', value: u.active ? 'yes' : 'no',
-      options: [{ value: 'yes', label: 'Active — can log in' }, { value: 'no', label: 'Inactive — blocked' }] }] : []),
-  ];
-  view.querySelector('#add').onclick = async () => {
-    const u = await formDialog({ title: 'Add user', fields: userFields(), submitLabel: 'Create',
-      onSubmit: (v) => post('/admin/users', v) });
-    if (u) { await showPassword(u); viewUsers(); }
-  };
-  view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = async () => {
-    const u = users.find((x) => x.id === b.dataset.edit);
-    if (await formDialog({ title: `Edit ${u.name}`, fields: userFields(u),
-      onSubmit: (v) => put(`/admin/users/${u.id}`, { ...v, active: v.active === 'yes' }) })) viewUsers();
-  });
-  view.querySelectorAll('[data-reset]').forEach((b) => b.onclick = async () => {
-    const u = users.find((x) => x.id === b.dataset.reset);
-    if (!(await confirmDialog(`Give ${u.name} a new password? Their current one stops working.`, 'Reset'))) return;
-    try {
-      await showPassword(await post(`/admin/users/${u.id}/reset-password`));
-      if (u.id === me.id) { me = null; showLogin('Your password was reset — log in with the new one.'); }
-    } catch (e) { toast(e.message, true); }
-  });
+function about() {
+  shell({ title: 'About', back: '#/more', tab: 'more', body: `
+    <section class="card center-text about"><img src="/img/icon-192.png" alt="" class="login-logo"><h2>FC Inspect</h2>
+      <p class="muted">Cleaning quality inspections for FC Cleaning Company</p><p class="small muted">Version ${esc(VERSION)}</p></section>
+    <h3 class="section-h">How it works</h3>
+    <div class="card stack small">
+      <p><strong>Quality checks</strong> score each item 1–10. Anything below 7 needs an urgent action with an owner and a deadline.</p>
+      <p><strong>Before &amp; after</strong> inspections pair a before photo with an after photo of the same spot. They are internal.</p>
+      <p><strong>Notifications:</strong> every submitted inspection is emailed to the admins with the PDF attached — marked URGENT when something scored low.</p>
+      <p><strong>Offline:</strong> you can start and complete inspections with no signal. Everything syncs when you reconnect.</p>
+    </div>` });
 }
 
-// ── router ──────────────────────────────────────────────
-// inspect.js imported with this file's ?v= so Cloudflare's 4h cache never serves a stale copy
-const { inspectViews, flush } = await import(`./inspect.js${new URL(import.meta.url).search}`);
-const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog, formDialog });
-const { reviewViews } = await import(`./review.js${new URL(import.meta.url).search}`);
-const review = reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog });
-const INSPECT_ROUTES = [
-  [/^#\/inspect$/, insp.home], [/^#\/inspect\/new$/, insp.start],
-  [/^#\/inspect\/([\w-]{36})$/, insp.overview], [/^#\/inspect\/([\w-]{36})\/finish$/, insp.finish],
-  [/^#\/inspect\/([\w-]{36})\/(\d+)$/, insp.item],
-];
+// ── routing ─────────────────────────────────────────────
 let leaveGuard = null;
-const ROUTES = [...INSPECT_ROUTES,
-  [/^#\/inspections$/, () => review.list('submitted')],
-  [/^#\/inspections\/f\/(\w+)$/, (f) => review.list(f === 'all' ? '' : f)],
-  [/^#\/inspections\/([\w-]{36})$/, review.detail],
-  [/^#\/actions$/, () => review.actions(false)], [/^#\/actions\/done$/, () => review.actions(true)],
-  [/^#\/clients\/([\w-]+)$/, viewClient], [/^#\/clients$/, viewClients],
-  [/^#\/templates\/([\w-]+)$/, viewTemplate], [/^#\/templates$/, viewTemplates],
-  [/^#\/users$/, viewUsers],
+const setLeaveGuard = (fn) => { leaveGuard = fn; };
+let insp, report, lists, admin;
+
+async function inspectionRoute(id, sub, n) {
+  const view = shell({ title: 'Inspection', back: '#/inspections', focus: true, body: skeleton(3) });
+  try {
+    if (sub === 'item') return await insp.item(id, n);
+    if (sub === 'review') return await insp.review(id);
+    if (sub === 'sign') return await insp.sign(id);
+    if (sub === 'done') return await insp.done(id);
+    const data = await loadInspection(id, { fresh: true });
+    if (data.inspector_id === me.id && editable(data)) return await insp.detail(data);
+    return await report.report(data, () => inspectionRoute(id));
+  } catch (e) {
+    if (e.status === 401) return;
+    view.innerHTML = e.status === 404 ? '<div class="empty"><h3>Inspection not found</h3><p>It may have been discarded.</p><a class="btn" href="#/inspections">Back to inspections</a></div>' : errorState(e);
+    view.querySelector('#retry')?.addEventListener('click', () => inspectionRoute(id, sub, n));
+  }
+}
+
+const UUID = '([0-9a-f-]{36})';
+const ROUTES = () => [
+  [/^#\/home$/, () => lists.home()],
+  [/^#\/start(?:\/([0-9a-f-]{36}))?(?:\/([\w.-]+))?$/, (site, choice) => insp.start(site, choice)],
+  [new RegExp(`^#/inspections/${UUID}(?:/(item|review|sign|done)(?:/(\\d+))?)?$`), inspectionRoute],
+  [/^#\/inspections$/, (q) => lists.inspections(q)],
+  [new RegExp(`^#/actions/${UUID}/([^/]+)$`), (i, k) => lists.action(i, decodeURIComponent(k))],
+  [/^#\/actions$/, () => lists.actions()],
+  [/^#\/more$/, more], [/^#\/sync$/, syncScreen], [/^#\/about$/, about],
+  ...(isAdmin() ? [
+    [/^#\/clients$/, () => admin.clients()], [/^#\/clients\/([\w-]+)$/, (id) => admin.client(id)],
+    [/^#\/templates$/, () => admin.templates()], [/^#\/templates\/([\w-]+)$/, (id) => admin.template(id)],
+    [/^#\/users$/, () => admin.users()],
+  ] : []),
 ];
+// links from before the redesign (bookmarks, old emails) keep working
+const LEGACY = [
+  [/^#\/inspect$/, () => '#/home'], [/^#\/inspect\/new$/, () => '#/start'],
+  [new RegExp(`^#/inspect/${UUID}$`), (id) => `#/inspections/${id}`],
+  [new RegExp(`^#/inspect/${UUID}/finish$`), (id) => `#/inspections/${id}/review`],
+  [new RegExp(`^#/inspect/${UUID}/(\\d+)$`), (id, n) => `#/inspections/${id}/item/${n}`],
+  [/^#\/inspections\/f\/(\w+)$/, (f) => `#/inspections?f=${f}`],
+  [/^#\/actions\/done$/, () => '#/actions'],
+];
+
 let lastHash = location.hash;
 async function route() {
   if (leaveGuard && !leaveGuard()) { history.replaceState(null, '', lastHash); return; }
   leaveGuard = null; lastHash = location.hash;
-  const routes = { admin: ROUTES, inspector: INSPECT_ROUTES }[me.role];
-  if (!routes) return shell('<p class="empty">This account has no access. Please contact the FC Cleaning office.</p>');
-  const hit = routes.find(([re]) => re.test(location.hash));
-  if (!hit) { location.replace(me.role === 'admin' ? '#/inspections' : '#/inspect'); return; }
-  try { await hit[1](...location.hash.match(hit[0]).slice(1)); }
-  catch (err) { err.status === 401 ? showLogin('Your session ended — log in again.') : shell(`<p class="error">${esc(err.message)}</p>`); }
+  const legacy = LEGACY.find(([re]) => re.test(location.hash));
+  if (legacy) { location.replace(legacy[1](...location.hash.match(legacy[0]).slice(1))); return; }
+  const [path, qs] = location.hash.split('?');
+  const hit = ROUTES().find(([re]) => re.test(path));
+  if (!hit) { location.replace('#/home'); return; }
+  const args = path.match(hit[0]).slice(1);
+  if (qs) args.push(Object.fromEntries(new URLSearchParams(qs)));
+  scrollTo(0, 0);
+  try { await hit[1](...args); } catch (err) {
+    if (err.status === 401) return;
+    console.error(err);
+    const view = shell({ title: 'FC Inspect', body: errorState(err) });
+    view.querySelector('#retry').onclick = route;
+  }
 }
 addEventListener('hashchange', () => me && route());
+addEventListener('fci:logged-out', () => { if (me) { me = null; showLogin('Your session ended — please log in again.'); } });
 
 async function start() {
-  try { me = await api('/me'); route(); flush(); }
-  catch (err) { err.status === 401 ? showLogin() : ($app.innerHTML = `<p class="error center">${esc(err.message)}</p>`); }
+  try { me = await api('/me'); } catch (err) {
+    if (err.status === 401) return showLogin();
+    $app.innerHTML = `<div class="login-screen">${errorState(err)}</div>`;
+    document.getElementById('retry').onclick = start;
+    return;
+  }
+  const ctx = { shell, me: () => me, setLeaveGuard };
+  insp = inspectViews(ctx); report = reportViews(ctx); lists = listViews(ctx); admin = adminViews(ctx);
+  if (!location.hash || location.hash === '#/') location.replace('#/home');
+  else route();
+  flush();
 }
 start();
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('sw', e));

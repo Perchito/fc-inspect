@@ -1,9 +1,13 @@
-// Inspector screens: start an inspection, walk the items (photos + notes), sign, submit.
-// Photos, notes, deletes and the final submit go through an IndexedDB outbox, so a
-// dropped signal never loses work: the outbox retries until the server has it.
+// Supervisor workflow: start an inspection, work through items one at a time (photos, score, notes,
+// action plans, before & after), review, sign, submit. Every change goes through an IndexedDB outbox
+// so a dropped signal never loses work — including starting an inspection with no signal at all.
+import {
+  esc, icon, api, del, toast, sheet, confirmSheet, viewer, skeleton, emptyState, errorState, statusBadge,
+  scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar,
+} from './ui.js?v=__V__';
 
 // ── outbox ──────────────────────────────────────────────
-// entries: {id, seq, inspectionId, method, url, body (Blob|string), contentType, kind, itemKey?}
+// entries: {id, seq, inspectionId, method, url, body (Blob|string), contentType, kind, itemKey?, phase?, pairId?, local?}
 const idb = new Promise((resolve, reject) => {
   const req = indexedDB.open('fc-inspect', 1);
   req.onupgradeneeded = () => req.result.createObjectStore('outbox', { keyPath: 'id' });
@@ -19,49 +23,55 @@ async function store(mode, fn) {
     tx.onerror = () => reject(tx.error);
   });
 }
+function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 let seq = Date.now();
 const listeners = new Set();
+export const sync = { flushing: false, uploadingId: null, error: '', lastSynced: Number(safeGet('fci-last-synced')) || null, pending: [] };
 export const outbox = {
-  async put(entry) { await store('readwrite', (s) => s.put({ ...entry, seq: seq++ })); notify(); flush(); },
-  async remove(id) { await store('readwrite', (s) => s.delete(id)); notify(); },
+  async put(entry) { await store('readwrite', (s) => s.put({ ...entry, seq: seq++ })); await notify(); flush(); },
+  async remove(id) { await store('readwrite', (s) => s.delete(id)); await notify(); },
   async all() { return ((await store('readonly', (s) => s.getAll())) || []).sort((a, b) => a.seq - b.seq); },
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
-async function notify() { const all = await outbox.all(); listeners.forEach((fn) => fn(all)); }
+async function notify() { sync.pending = await outbox.all(); listeners.forEach((fn) => fn(sync)); }
+const KIND = { photo: 'photo', note: 'item update', delete: 'photo delete', submit: 'submission', additem: 'new item', delitem: 'removed item', start: 'new inspection' };
 
-let flushing = false, retryTimer = null, retryDelay = 3000;
-export let outboxError = '';
+let retryTimer = null, retryDelay = 3000;
 export async function flush() {
-  if (flushing) return;
-  flushing = true; clearTimeout(retryTimer);
+  if (sync.flushing) return;
+  sync.flushing = true; clearTimeout(retryTimer); notify();
   try {
     for (const e of await outbox.all()) {
+      sync.uploadingId = e.id; notify();
       let res;
       try {
         res = await fetch(e.url, { method: e.method, body: e.body, headers: e.contentType ? { 'content-type': e.contentType } : {} });
       } catch { return retryLater(); } // offline / dropped connection
-      if (res.status === 401) { outboxError = 'Log in again to send your saved work.'; notify(); return; }
+      if (res.status === 401) { sync.error = 'Log in again to send your saved work.'; return; }
       if (res.status >= 500 || res.status === 429 || res.status === 408) return retryLater();
-      if (!res.ok) { // the server refused it for good (e.g. inspection already approved): drop it, but say so
+      if (!res.ok) { // refused for good (e.g. already submitted elsewhere): drop it, but say so
         const msg = (await res.json().catch(() => ({}))).error || res.statusText;
         console.warn('[outbox] dropped', e.kind, msg);
-        outboxError = `Couldn't save a ${{ additem: 'new item', delitem: 'removed item' }[e.kind] || e.kind}: ${msg}`;
+        sync.error = `A ${KIND[e.kind] || e.kind} couldn't be saved: ${msg}`;
       }
       await outbox.remove(e.id);
     }
     retryDelay = 3000;
-    if (outboxError.startsWith('Log in')) outboxError = '';
-    notify();
-  } finally { flushing = false; }
+    if (sync.error.startsWith('Log in')) sync.error = '';
+    sync.lastSynced = Date.now();
+    try { localStorage.setItem('fci-last-synced', String(sync.lastSynced)); } catch {}
+  } finally { sync.flushing = false; sync.uploadingId = null; notify(); }
 }
 function retryLater() {
   retryTimer = setTimeout(flush, retryDelay);
   retryDelay = Math.min(retryDelay * 2, 60_000);
 }
-addEventListener('online', flush);
+export const clearSyncError = () => { sync.error = ''; notify(); };
+addEventListener('online', () => { notify(); flush(); });
+addEventListener('offline', () => notify());
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && flush());
 navigator.storage?.persist?.(); // ask the browser not to evict unsent photos
-flush();
+notify().then(flush);
 
 // ── location ────────────────────────────────────────────
 let lastPos = null, watchId = null, gpsDenied = false;
@@ -98,12 +108,9 @@ async function shrink(file) {
 // ── signature pad ───────────────────────────────────────
 export function signaturePad(canvas) {
   const ratio = devicePixelRatio || 1, ctx = canvas.getContext('2d');
-  const size = () => {
-    const { width, height } = canvas.getBoundingClientRect();
-    canvas.width = width * ratio; canvas.height = height * ratio;
-    ctx.scale(ratio, ratio); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#05101f';
-  };
-  size();
+  const { width, height } = canvas.getBoundingClientRect();
+  canvas.width = width * ratio; canvas.height = height * ratio;
+  ctx.scale(ratio, ratio); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#05101f';
   let drawing = false, inked = false, onInk = () => {};
   const at = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   canvas.addEventListener('pointerdown', (e) => { drawing = true; canvas.setPointerCapture(e.pointerId); ctx.beginPath(); ctx.moveTo(...at(e)); ctx.lineTo(...at(e)); ctx.stroke(); });
@@ -113,8 +120,7 @@ export function signaturePad(canvas) {
     get inked() { return inked; },
     onInk(fn) { onInk = fn; },
     clear() { ctx.clearRect(0, 0, canvas.width, canvas.height); inked = false; onInk(false); },
-    dataUrl() {
-      // export on white so the PNG reads well in reports
+    dataUrl() { // exported on white so it reads well in reports
       const out = document.createElement('canvas'); out.width = canvas.width; out.height = canvas.height;
       const o = out.getContext('2d'); o.fillStyle = '#fff'; o.fillRect(0, 0, out.width, out.height); o.drawImage(canvas, 0, 0);
       return out.toDataURL('image/png');
@@ -122,289 +128,288 @@ export function signaturePad(canvas) {
   };
 }
 
-// ── screens ─────────────────────────────────────────────
-const STATUS = {
-  draft: ['In progress', 'pill'], returned: ['Sent back — needs changes', 'pill warn'],
-  submitted: ['Waiting for review', 'pill'], approved: ['Approved', 'pill ok'],
-};
-// quality checks: every item scored 1-10; below 7 needs an urgent action plan (mirrors itemProblems on the server)
-export const LOW_SCORE = 7;
+// ── item rules (mirror the server's itemProblems / ITEM_DONE_SQL) ──
+const planDone = (it) => !!(it.action_what?.trim() && it.action_who?.trim() && it.action_due);
+// state of one item: 'todo' | 'score' | 'plan' | 'after' | 'done'
+export function itemState(insp, it, photos) {
+  const ps = photos.filter((p) => p.item_key === it.item_key);
+  if (insp.mode === 'check') {
+    if (!it.score) return ps.length || it.note?.trim() ? 'score' : 'todo';
+    return it.score < LOW_SCORE && !planDone(it) ? 'plan' : 'done';
+  }
+  const befores = ps.filter((p) => p.phase !== 'after');
+  if (!befores.length) return 'todo';
+  return befores.some((b) => !ps.some((a) => a.phase === 'after' && a.pair_id === b.id)) ? 'after' : 'done';
+}
+const STATE_LABEL = { todo: 'Not started', score: 'Needs a score', plan: 'Action plan needed', after: 'After photo pending', done: 'Done' };
 export const itemProblem = (it, mode) => mode !== 'check' ? ''
-  : !it.score ? 'Give this item a score'
-  : it.score < LOW_SCORE && !(it.action_what?.trim() && it.action_who?.trim() && it.action_due) ? 'Fill in the urgent action plan: what, who and deadline'
-  : '';
-const scorePill = (it) => it.score ? `<span class="score-pill${it.score < LOW_SCORE ? ' low' : ''}">${it.score}/10</span>` : '';
-const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
-const fmt = (d) => new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  : !it.score ? 'Give this item a score before moving on.'
+  : it.score < LOW_SCORE && !planDone(it) ? 'Scores below 7 need an action plan: what, who and a deadline.' : '';
+export const avgScore = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
+const randomKey = () => [...crypto.getRandomValues(new Uint8Array(5))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
-export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog, formDialog }) {
-  let current = null; // the inspection being walked: server data + local pending changes
+// ── data: the user's own inspections, with anything still queued on this phone laid over ──
+export async function fetchMine() {
+  const [list, pending] = await Promise.all([api('/inspections/mine').catch((e) => { if (e.offline) return []; throw e; }), outbox.all()]);
+  const submitting = new Set(pending.filter((e) => e.kind === 'submit').map((e) => e.inspectionId));
+  for (const e of pending.filter((p) => p.kind === 'start' && !list.some((i) => i.id === p.inspectionId))) {
+    const l = e.local;
+    list.unshift({ id: e.inspectionId, status: 'draft', mode: l.mode, template_id: l.template_id, template_name: l.template_name,
+      site_name: l.site_name, client_name: l.client_name, started_at: l.started_at, item_count: l.items.length, done_count: 0, local: true });
+  }
+  for (const i of list) if (submitting.has(i.id)) i.sending = true;
+  return list;
+}
 
-  // syncing badge in the header
-  const syncText = (all) => {
-    const el = document.getElementById('sync'); if (!el) return;
-    const n = all.length;
-    el.hidden = !n && !outboxError;
-    el.className = `sync${outboxError ? ' bad' : ''}`;
-    el.textContent = outboxError || (n ? `${n} waiting to upload${navigator.onLine ? '…' : ' (offline)'}` : '');
-  };
-  outbox.onChange(syncText);
-  // when a queued photo leaves the outbox it has been uploaded: show it as a server photo
-  let uploading = new Map();
-  outbox.onChange((all) => {
-    const now = new Map(all.filter((e) => e.kind === 'photo').map((e) => [e.id, e]));
-    for (const [pid, e] of uploading) {
-      if (!now.has(pid) && current?.id === e.inspectionId) current.photos.push({ id: pid, item_key: e.itemKey, phase: e.phase, pair_id: e.pairId });
+let current = null; // inspection being worked on: server data + this phone's unsent changes
+// Load an inspection, falling back to the queued start when it hasn't reached the server yet (offline start).
+export async function loadInspection(id, { fresh = false } = {}) {
+  if (!fresh && current?.id === id) return current;
+  const pending = (await outbox.all()).filter((p) => p.inspectionId === id);
+  let insp;
+  try { insp = await api(`/inspections/${id}`); } catch (err) {
+    const start = pending.find((e) => e.kind === 'start');
+    if (!start || !(err.offline || err.status === 404)) throw err;
+    const l = start.local;
+    insp = { id, status: 'draft', mode: l.mode, template_id: l.template_id, template_name: l.template_name, site_name: l.site_name,
+      site_address: l.site_address, client_name: l.client_name, started_at: l.started_at, inspector_name: l.inspector_name,
+      inspector_id: l.inspector_id, items: l.items.map((it) => ({ ...it, note: '' })), photos: [], comments: [], local: true };
+  }
+  for (const e of pending) {
+    if (e.kind === 'additem' && !insp.items.some((i) => i.item_key === e.itemKey)) insp.items.push({ item_key: e.itemKey, label: JSON.parse(e.body).label, hint: '', note: '', added: true });
+    if (e.kind === 'delitem') insp.items = insp.items.filter((i) => i.item_key !== e.itemKey);
+    if (e.kind === 'note') Object.assign(insp.items.find((i) => i.item_key === e.itemKey) || {}, JSON.parse(e.body));
+    if (e.kind === 'delete') insp.photos = insp.photos.filter((p) => p.id !== e.photoId);
+  }
+  insp.submitting = pending.some((e) => e.kind === 'submit');
+  return (current = insp);
+}
+export const forgetCurrent = () => { current = null; };
+// when a queued photo leaves the outbox it has been uploaded: keep showing it, now from the server
+let uploading = new Map();
+outbox.onChange(({ pending }) => {
+  const now = new Map(pending.filter((e) => e.kind === 'photo').map((e) => [e.id, e]));
+  for (const [pid, e] of uploading) {
+    if (!now.has(pid) && current?.id === e.inspectionId && !current.photos.some((p) => p.id === pid)) {
+      current.photos.push({ id: pid, item_key: e.itemKey, phase: e.phase, pair_id: e.pairId });
     }
-    uploading = now;
+  }
+  uploading = now;
+});
+// every photo of an inspection, uploaded or still queued: {id, item_key, phase, pair_id, src, local}
+const localUrls = new Map();
+export async function allPhotos(insp) {
+  const local = (await outbox.all()).filter((e) => e.kind === 'photo' && e.inspectionId === insp.id).map((e) => {
+    if (!localUrls.has(e.id)) localUrls.set(e.id, URL.createObjectURL(e.body));
+    return { id: e.id, item_key: e.itemKey, phase: e.phase, pair_id: e.pairId, src: localUrls.get(e.id), local: true };
   });
-  const page = (html) => { const v = shell(html); notify(); return v; };
+  return [...insp.photos.map((p) => ({ ...p, src: `/api/photos/${p.id}` })), ...local];
+}
+export const editable = (insp) => ['draft', 'returned'].includes(insp.status) && !insp.submitting;
+const isFree = (insp) => insp.mode === 'before_after' && !insp.template_id;
+const itemTitle = (insp) => (insp.template_id ? insp.template_name : modeLabel(insp));
 
-  async function home() {
-    const [list, pending] = await Promise.all([api('/inspections/mine'), outbox.all()]);
-    const submitting = new Set(pending.filter((e) => e.kind === 'submit').map((e) => e.inspectionId));
-    const open = list.filter((i) => ['draft', 'returned'].includes(i.status) && !submitting.has(i.id));
-    const done = list.filter((i) => !open.includes(i));
-    const row = (i) => {
-      const [label, cls] = submitting.has(i.id) ? ['Sending…', 'pill'] : STATUS[i.status];
-      return `<li><a class="list-link" href="#/inspect/${i.id}">
-        <span class="grow"><strong>${esc(i.site_name)}</strong><br><span class="muted small">${i.mode === 'before_after' ? 'Before &amp; after · ' : ''}${esc(i.client_name)} · ${esc(i.template_name)} · ${fmt(i.started_at)}</span></span>
-        <span class="${cls}">${label}</span></a></li>`;
-    };
-    page(`
-      <a class="btn primary big" href="#/inspect/new">Start an inspection</a>
-      ${open.length ? `<h2>To finish</h2><ul class="list">${open.map(row).join('')}</ul>` : ''}
-      <h2>Recent</h2>
-      ${done.length ? `<ul class="list">${done.map(row).join('')}</ul>` : '<p class="empty">Nothing submitted yet.</p>'}`);
-  }
+// ── screens ─────────────────────────────────────────────
+export function inspectViews({ shell, me }) {
+  const base = (id) => `#/inspections/${id}`;
 
-  async function start() {
-    const sites = await api('/inspect/sites');
-    watchGps();
-    const view = page(`
-      <p><a href="#/inspect">← Back</a></p>
-      <h1>Which site?</h1>
-      <input id="q" type="search" placeholder="Search sites or clients" aria-label="Search sites" autocomplete="off">
-      <ul class="list" id="sites"></ul>
-      <p class="muted small">Ask the office if a site is missing.</p>`);
-    const $list = view.querySelector('#sites'), $q = view.querySelector('#q');
-    const render = () => {
-      const q = $q.value.trim().toLowerCase();
-      const hits = sites.filter((s) => `${s.name} ${s.client_name} ${s.address || ''}`.toLowerCase().includes(q));
-      $list.innerHTML = hits.map((s) => `<li><button class="list-link as-button" data-site="${s.id}">
-        <span class="grow"><strong>${esc(s.name)}</strong><br><span class="muted small">${esc(s.client_name)}${s.address ? ` · ${esc(s.address)}` : ''}</span></span></button></li>`).join('')
-        || '<li class="list-row muted">No matching sites</li>';
-    };
-    render(); $q.oninput = render;
-    $list.onclick = async (e) => {
-      const b = e.target.closest('[data-site]'); if (!b) return;
-      chooseMode(sites.find((s) => s.id === b.dataset.site));
-    };
-  }
-
-  function chooseMode(site) {
-    const none = !site.templates.length;
-    const noTpl = '<span class="small warn-text">No checklist set up for this site yet — ask the office.</span>';
-    const view = page(`
-      <p><a href="#/inspect/new">← Back</a></p>
-      <h1>What kind of inspection?</h1>
-      <p class="muted">${esc(site.name)} · ${esc(site.client_name)}</p>
-      <button class="card mode-pick" data-mode="check" ${none ? 'disabled' : ''}><strong>Quality check</strong>
-        <span class="muted">Score each area 1–10 with photos and notes, using the site's checklist. Shared with the client once approved.</span>${none ? noTpl : ''}</button>
-      <button class="card mode-pick" data-mode="before_after" ${none ? 'disabled' : ''}><strong>Before &amp; after</strong>
-        <span class="muted">For deep cleans, using the site's checklist: before photos now, after photos next to each one once the clean is done. Internal.</span>${none ? noTpl : ''}</button>
-      <button class="card mode-pick" data-mode="before_after" data-free><strong>Before &amp; after — no checklist</strong>
-        <span class="muted">Starts empty: add each item as you go (e.g. "Oven"), take before photos, then after photos once it's clean. Internal — never shown to the client.</span></button>`);
-    view.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => {
-      if ('free' in b.dataset) return begin(site, null, 'before_after');
-      if (site.templates.length === 1) return begin(site, site.templates[0], b.dataset.mode);
-      pickTemplate(site, b.dataset.mode);
+  // add an item found on site (this inspection only, never the template)
+  async function addItem(insp, { first = false } = {}) {
+    const v = await sheet({
+      title: first ? 'Add the first item' : 'Add an item', submitLabel: 'Add item',
+      text: isFree(insp) ? 'Name what you are photographing.' : 'Something you found that is not on the checklist.',
+      fields: [{ name: 'label', label: 'Item name', placeholder: 'e.g. Oven, fire exit door, stained carpet', required: true }],
     });
-  }
-
-  function pickTemplate(site, mode) {
-    const view = page(`
-      <p><a href="#/inspect/new">← Back</a></p>
-      <h1>Which checklist?</h1>
-      <p class="muted">${esc(site.name)}</p>
-      <ul class="list">${site.templates.map((t) => `<li><button class="list-link as-button" data-template="${t.id}">
-        <span class="grow">${esc(t.name)}</span><span class="muted small">${t.item_count} items</span></button></li>`).join('')}</ul>`);
-    view.querySelectorAll('[data-template]').forEach((b) => b.onclick = () => begin(site, site.templates.find((t) => t.id === b.dataset.template), mode));
-  }
-
-  async function begin(site, template, mode) {
-    page(`<p class="center">Starting inspection at <strong>${esc(site.name)}</strong>…<br><span class="muted small">Getting your location</span></p>`);
-    const id = crypto.randomUUID(), started_at = new Date().toISOString();
-    const start_gps = await currentGps();
-    for (;;) {
-      try {
-        await post('/inspections', { id, site_id: site.id, template_id: template?.id ?? null, mode, start_gps, started_at });
-        location.hash = template ? `#/inspect/${id}/1` : `#/inspect/${id}`; // no checklist: starts empty
-
-        return;
-      } catch (err) {
-        if (err.status && err.status < 500) { toast(err.message, true); location.hash = '#/inspect'; return; }
-        const view = page(`<section class="card stack center-text"><h2>No connection</h2>
-          <p class="muted">Couldn't start the inspection. Check your signal and try again.</p>
-          <button class="btn primary" id="retry">Try again</button></section>`);
-        await new Promise((r) => { view.querySelector('#retry').onclick = r; });
-      }
-    }
-  }
-
-  // fetch the inspection and lay unsent local changes (notes, photos, deletes) over it
-  async function load(id) {
-    if (current?.id === id) return current;
-    const [insp, pending] = await Promise.all([api(`/inspections/${id}`), outbox.all()]);
-    for (const e of pending.filter((p) => p.inspectionId === id)) {
-      if (e.kind === 'additem' && !insp.items.some((i) => i.item_key === e.itemKey)) insp.items.push({ item_key: e.itemKey, label: JSON.parse(e.body).label, hint: '', note: '', added: true });
-      if (e.kind === 'delitem') insp.items = insp.items.filter((i) => i.item_key !== e.itemKey);
-      if (e.kind === 'note') Object.assign(insp.items.find((i) => i.item_key === e.itemKey), JSON.parse(e.body));
-      if (e.kind === 'delete') insp.photos = insp.photos.filter((p) => p.id !== e.photoId);
-    }
-    insp.submitting = pending.some((e) => e.inspectionId === id && e.kind === 'submit');
-    return (current = insp);
-  }
-  // something found on site that isn't on the checklist: add it to this inspection only
-  async function addItem(insp) {
-    const v = await formDialog({ title: 'Add an item', submitLabel: 'Add',
-      fields: [{ name: 'label', label: 'What did you find? e.g. Fire exit door, stained carpet by lift', required: true }] });
     const label = v?.label?.trim().slice(0, 200);
     if (!label) return;
-    const key = [...crypto.getRandomValues(new Uint8Array(5))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const key = randomKey();
     insp.items.push({ item_key: key, label, hint: '', note: '', added: true });
     await outbox.put({ id: `additem:${insp.id}:${key}`, inspectionId: insp.id, itemKey: key, kind: 'additem', method: 'POST',
       url: `/api/inspections/${insp.id}/items`, body: JSON.stringify({ key, label }), contentType: 'application/json' });
-    location.hash = `#/inspect/${insp.id}/${insp.items.length}`;
+    location.hash = `${base(insp.id)}/item/${insp.items.length}`;
   }
-  // before & after with no checklist: the inspector builds the item list on site
-  const isFree = (insp) => insp.mode === 'before_after' && !insp.template_id;
-  const editable = (insp) => ['draft', 'returned'].includes(insp.status) && !insp.submitting;
-  const pendingPhotos = async (id, key) => (await outbox.all()).filter((e) => e.kind === 'photo' && e.inspectionId === id && e.itemKey === key);
 
-  // overview: every item with its photos/notes; read-only once submitted
-  async function overview(id) {
-    current = null;
-    const insp = await load(id);
-    const pending = (await outbox.all()).filter((e) => e.kind === 'photo' && e.inspectionId === id);
-    const can = editable(insp);
-    const [label, cls] = insp.submitting ? ['Sending…', 'pill'] : STATUS[insp.status];
-    const view = page(`
-      <p><a href="#/inspect">← My inspections</a></p>
-      <section class="card">
-        <div class="row between"><h1>${esc(insp.site_name)}</h1><span class="${cls}">${label}</span></div>
-        <p class="muted">${insp.mode === 'before_after' ? 'Before &amp; after · ' : ''}${esc(insp.client_name)} · ${esc(insp.template_name)} · started ${fmt(insp.started_at)}</p>
-        ${insp.mode === 'before_after' && can ? '<p class="small">Leave this inspection open during the clean, then come back and add the after photos.</p>' : ''}
-        ${insp.comments.length ? `<div class="comments">${insp.comments.map((c) => `<p><strong>${esc(c.name)}:</strong> ${esc(c.body)}</p>`).join('')}</div>` : ''}
+  // ── start flow: site → inspection → confirm ──
+  let sitesCache = null;
+  async function start(siteId, choice) {
+    const stepNo = siteId ? (choice ? 3 : 2) : 1;
+    const view = shell({ title: 'New inspection', subtitle: `Step ${stepNo} of 3`,
+      back: siteId ? (choice ? `#/start/${siteId}` : '#/start') : '#/home', focus: true, body: skeleton(4) });
+    try { sitesCache = await api('/inspect/sites'); } catch (e) {
+      if (!sitesCache) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = () => start(siteId, choice); return; }
+    }
+    watchGps();
+    const steps = `<ol class="steps" aria-hidden="true">${[1, 2, 3].map((i) => `<li class="${i <= stepNo ? 'on' : ''}"></li>`).join('')}</ol>`;
+    if (!siteId) {
+      view.innerHTML = `${steps}<h2 class="screen-h">Which site?</h2>${searchBar('Search sites or clients')}<div class="stack" id="sites"></div>`;
+      const $q = view.querySelector('input'), $list = view.querySelector('#sites');
+      const render = () => {
+        const q = $q.value.trim().toLowerCase();
+        const hits = sitesCache.filter((s) => `${s.name} ${s.client_name} ${s.address || ''}`.toLowerCase().includes(q));
+        $list.innerHTML = hits.map((s) => `<a class="card tap media" href="#/start/${s.id}">
+            <span class="card-ic">${icon('building')}</span>
+            <span class="grow"><strong>${esc(s.name)}</strong><small>${esc(s.client_name)}${s.address ? ` · ${esc(s.address)}` : ''}</small></span>
+            ${icon('chevron', 'chev')}</a>`).join('')
+          || emptyState({ icon: 'search', title: sitesCache.length ? 'No matching sites' : 'No sites yet', text: sitesCache.length ? 'Try another name.' : 'Ask the office to add your sites.' });
+      };
+      render(); $q.oninput = render;
+      return;
+    }
+    const site = sitesCache.find((s) => s.id === siteId);
+    if (!site) { location.replace('#/start'); return; }
+    // every way to inspect this site: each checklist as a quality check or before & after, plus no checklist
+    const options = [
+      ...site.templates.map((t) => ({ key: `check.${t.id}`, mode: 'check', template: t, title: t.name, kind: 'Quality check', ic: 'actions', text: `${t.item_count} items · score each 1–10` })),
+      ...site.templates.map((t) => ({ key: `ba.${t.id}`, mode: 'before_after', template: t, title: t.name, kind: 'Before & after', ic: 'image', text: `${t.item_count} items · photos before and after the clean` })),
+      { key: 'free', mode: 'before_after', template: null, title: 'No checklist', kind: 'Before & after', ic: 'plus', text: 'Start empty and add each item as you go' },
+    ];
+    if (!choice) {
+      const group = (kind) => options.filter((o) => o.kind === kind).map((o) => `<a class="card tap media" href="#/start/${siteId}/${o.key}">
+          <span class="card-ic ${o.mode === 'check' ? 'blue' : 'teal'}">${icon(o.ic)}</span>
+          <span class="grow"><strong>${esc(o.title)}</strong><small>${esc(o.text)}</small></span>${icon('chevron', 'chev')}</a>`).join('');
+      view.innerHTML = `${steps}<h2 class="screen-h">${esc(site.name)}</h2><p class="muted">${esc(site.client_name)}</p>
+        <h3 class="section-h">Quality check <span class="muted small">· shared with the client</span></h3>
+        ${site.templates.length ? `<div class="stack">${group('Quality check')}</div>` : '<p class="note-box">No checklist set up for this site yet — ask the office.</p>'}
+        <h3 class="section-h">Before &amp; after <span class="muted small">· internal</span></h3><div class="stack">${group('Before & after')}</div>`;
+      return;
+    }
+    const o = options.find((x) => x.key === choice);
+    if (!o) { location.replace(`#/start/${siteId}`); return; }
+    view.innerHTML = `${steps}
+      <div class="card confirm-card">
+        <span class="card-ic xl ${o.mode === 'check' ? 'blue' : 'teal'}">${icon(o.ic)}</span>
+        <p class="eyebrow">${esc(o.kind)}</p><h2>${esc(o.title)}</h2>
+        <p>${esc(site.name)} · ${esc(site.client_name)}</p>
+        <p class="small muted">${esc(o.text)}</p>
+      </div>
+      <p class="muted small center-text">${icon('pin', 'inline')} Your location is recorded when you start and finish.</p>
+      <div class="bottom-bar"><button class="btn primary block lg" id="go">Start inspection</button></div>`;
+    view.querySelector('#go').onclick = async (e) => {
+      e.currentTarget.disabled = true; e.currentTarget.textContent = 'Starting…';
+      const id = crypto.randomUUID(), started_at = new Date().toISOString();
+      const start_gps = await currentGps(6000);
+      const items = (o.template?.items || []).map((it) => ({ item_key: it.key, label: it.label, hint: it.hint || '' }));
+      // queued like everything else, so starting works with no signal too
+      await outbox.put({ id: `start:${id}`, inspectionId: id, kind: 'start', method: 'POST', url: '/api/inspections', contentType: 'application/json',
+        body: JSON.stringify({ id, site_id: site.id, template_id: o.template?.id ?? null, mode: o.mode, start_gps, started_at }),
+        local: { mode: o.mode, template_id: o.template?.id ?? null, template_name: o.template?.name ?? 'No checklist', site_name: site.name,
+          site_address: site.address, client_name: site.client_name, started_at, inspector_name: me().name, inspector_id: me().id, items } });
+      current = null;
+      location.hash = items.length ? `${base(id)}/item/1` : base(id);
+    };
+  }
+
+  // ── inspection overview (its owner, while it can still be changed) ──
+  async function detail(insp) {
+    const id = insp.id;
+    const photos = await allPhotos(insp);
+    const states = insp.items.map((it) => itemState(insp, it, photos));
+    const done = states.filter((s) => s === 'done').length, total = insp.items.length;
+    const nextTodo = states.findIndex((s) => s !== 'done');
+    const free = isFree(insp);
+    const view = shell({ title: itemTitle(insp), subtitle: insp.site_name, back: '#/inspections', focus: true, body: `
+      <section class="card summary-card">
+        <div class="row-between">${statusBadge(insp.status)}<span class="muted small">${esc(modeLabel(insp))}</span></div>
+        <h2>${esc(insp.site_name)}</h2>
+        <p class="muted">${esc(insp.client_name)} · started ${esc(relDay(insp.started_at))}</p>
+        ${total ? progressBar(done, total) : ''}
       </section>
-      <ol class="walk-list">${insp.items.map((it, n) => {
-        const photos = insp.photos.filter((p) => p.item_key === it.item_key);
-        const local = pending.filter((p) => p.itemKey === it.item_key);
-        const img = (p) => p ? `<img src="/api/photos/${p.id}" alt="" loading="lazy">` : '<span class="thumb-pending">—</span>';
-        const pairs = insp.mode === 'before_after' && photos.length
-          ? `<div class="pairs small-pairs">${photos.filter((p) => p.phase !== 'after').map((b) =>
-              `<div class="pair">${img(b)}${img(photos.find((a) => a.pair_id === b.id))}</div>`).join('')}</div>` : '';
-        return `<li class="card">
-          <div class="row between"><strong>${n + 1}. ${esc(it.label)} ${it.added && !isFree(insp) ? '<span class="pill">Added on site</span>' : ''} ${scorePill(it)}</strong>
-            ${can ? `<a class="btn" href="#/inspect/${id}/${n + 1}">Edit</a>` : ''}</div>
-          ${pairs ? pairs + (local.length ? `<p class="muted small">${local.length} photo${local.length === 1 ? '' : 's'} uploading</p>` : '')
-            : photos.length + local.length ? `<div class="thumbs">${photos.map((p) => `<img src="/api/photos/${p.id}" alt="" loading="lazy">`).join('')}
-            ${local.map(() => '<span class="thumb-pending">Uploading</span>').join('')}</div>` : '<p class="muted small">No photos</p>'}
-          ${it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
-        </li>`;
-      }).join('')}</ol>
-      ${can && !insp.items.length ? `<section class="card empty-start center-text"><h2>No items yet</h2>
-        <p class="muted">Add the first thing you're photographing, e.g. "Oven" or "Bathroom tiles".</p></section>` : ''}
-      ${can ? `<button class="btn ${isFree(insp) ? 'primary big' : 'add-item'}" id="add-item" type="button">${isFree(insp)
-        ? (insp.items.length ? '+ Add next item' : '+ Add first item') : '+ Add an item not on the checklist'}</button>` : ''}
-      ${can && insp.items.length ? `<div class="row between sticky-bar">
-          ${insp.status === 'draft' ? '<button class="btn danger" id="discard">Discard</button>' : '<span></span>'}
-          <a class="btn primary" href="#/inspect/${id}/finish">Review &amp; sign</a></div>` : ''}`);
-    view.querySelector('#add-item')?.addEventListener('click', () => addItem(insp));
+      ${insp.comments?.length ? `<section class="card warn-card"><h3>${icon('alert')} Sent back by the office</h3>${insp.comments.map((c) =>
+        `<p><strong>${esc(c.name)}:</strong> ${esc(c.body)}</p>`).join('')}</section>` : ''}
+      ${insp.mode === 'before_after' && total ? '<p class="note-box">Take the before photos now. Leave this inspection open during the clean, then come back and add an after photo next to each one.</p>' : ''}
+      ${total ? `<h3 class="section-h">Items</h3><div class="stack">${insp.items.map((it, n) => {
+        const count = photos.filter((p) => p.item_key === it.item_key).length;
+        return `<a class="card tap media item-card" href="${base(id)}/item/${n + 1}">
+          <span class="item-num state-${states[n]}">${states[n] === 'done' ? icon('check') : n + 1}</span>
+          <span class="grow"><strong>${esc(it.label)}</strong>
+            <small>${STATE_LABEL[states[n]]}${count ? ` · ${count} photo${count === 1 ? '' : 's'}` : ''}${it.note?.trim() ? ' · note' : ''}</small></span>
+          ${scoreBadge(it.score)}${icon('chevron', 'chev')}</a>`;
+      }).join('')}</div>` : emptyState({ icon: 'camera', title: 'No items yet', text: 'Add the first thing you\'re photographing, e.g. "Oven" or "Bathroom tiles".' })}
+      <button class="btn ${free ? 'primary block lg' : 'dashed block'}" id="add-item">${icon('plus')} ${free ? (total ? 'Add next item' : 'Add first item') : 'Add an item not on the checklist'}</button>
+      ${insp.status === 'draft' ? `<button class="btn ghost-danger block" id="discard">${icon('trash')} Discard inspection</button>` : ''}
+      ${total ? `<div class="bottom-bar">${nextTodo >= 0
+        ? `<a class="btn primary block lg" href="${base(id)}/item/${nextTodo + 1}">${done ? 'Continue' : 'Start'} · item ${nextTodo + 1} of ${total} ${icon('chevron')}</a>`
+        : `<a class="btn primary block lg" href="${base(id)}/review">Review &amp; submit ${icon('chevron')}</a>`}</div>` : ''}` });
+    view.querySelector('#add-item').onclick = () => addItem(insp, { first: !total });
     view.querySelector('#discard')?.addEventListener('click', async () => {
-      if (!(await confirmDialog('Discard this inspection and all its photos?', 'Discard'))) return;
-      try {
-        await del(`/inspections/${id}`);
-        for (const e of await outbox.all()) if (e.inspectionId === id) await outbox.remove(e.id);
-        current = null; location.hash = '#/inspect';
-      } catch (e) { toast(e.message, true); }
+      if (!(await confirmSheet('Discard this inspection?', { text: 'All its photos and notes are deleted. This cannot be undone.', okLabel: 'Discard' }))) return;
+      const pending = (await outbox.all()).filter((e) => e.inspectionId === id);
+      try { if (!pending.some((e) => e.kind === 'start')) await del(`/inspections/${id}`); }
+      catch (e) { return toast(e.offline ? 'Discarding needs a connection.' : e.message, { error: true }); }
+      for (const e of pending) await outbox.remove(e.id);
+      current = null; toast('Inspection discarded'); location.hash = '#/home';
     });
   }
 
-  // one item: photos + note. Before & after inspections show photo pairs instead of a grid.
+  // ── one item at a time ──
   async function item(id, n) {
-    const insp = await load(id);
-    if (!editable(insp) || !insp.items.length) { location.replace(`#/inspect/${id}`); return; }
+    const insp = await loadInspection(id);
+    if (!editable(insp) || !insp.items.length) { location.replace(base(id)); return; }
     n = Math.min(Math.max(1, +n), insp.items.length);
-    const it = insp.items[n - 1], last = n === insp.items.length, ba = insp.mode === 'before_after';
+    const it = insp.items[n - 1], last = n === insp.items.length, ba = insp.mode === 'before_after', free = isFree(insp);
+    const total = insp.items.length;
     watchGps();
-    const view = page(`
-      <div class="walk-top"><a href="#/inspect/${id}">← ${esc(insp.site_name)}</a><span class="muted small">Item ${n} of ${insp.items.length}</span></div>
-      <div class="progress" aria-hidden="true"><span style="width:${(n / insp.items.length) * 100}%"></span></div>
-      <h1>${esc(it.label)}</h1>
-      ${it.added ? `<p class="small">${isFree(insp) ? '' : '<span class="pill">Added on site</span> '}<button class="link-btn danger" id="remove-item" type="button">Remove this item</button></p>` : ''}
-      ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
-      ${ba ? '<div class="pair-head" aria-hidden="true"><span>Before</span><span>After</span></div>' : ''}
-      <div class="${ba ? 'pairs' : 'thumbs big'}" id="thumbs"></div>
-      <div class="row photo-btns">
-        <label class="btn primary grow center-text">${ba ? 'Take before photo' : 'Take photo'}<input type="file" accept="image/*" capture="environment" hidden data-add></label>
-        <label class="btn grow center-text">From gallery<input type="file" accept="image/*" multiple hidden data-add></label>
-      </div>
-      <label>Notes<textarea id="note" rows="4" placeholder="What did you find? e.g. bins not emptied, streaks on glass">${esc(it.note)}</textarea></label>
-      ${ba ? '' : `
-      <fieldset class="score-pick"><legend>Score <span class="muted small">1 = very poor · 10 = perfect</span></legend>
-        <div class="score-grid">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
-          `<button type="button" data-score="${v}" class="${v < LOW_SCORE ? 'low' : ''}" aria-pressed="${it.score === v}">${v}</button>`).join('')}</div>
-      </fieldset>
-      <section class="card urgent stack" id="plan" ${it.score && it.score < LOW_SCORE ? '' : 'hidden'}>
-        <div><h2>Urgent action plan</h2><p class="small">Below ${LOW_SCORE} — say how this will be put right. The office is alerted when you submit.</p></div>
-        <label>What will be done<textarea data-f="action_what" rows="3" placeholder="e.g. Re-clean all toilets and descale taps">${esc(it.action_what)}</textarea></label>
-        <label>Who is responsible<input data-f="action_who" value="${esc(it.action_who)}" placeholder="Name"></label>
-        <label>Deadline<input type="date" data-f="action_due" value="${esc(it.action_due)}" min="${new Date().toISOString().slice(0, 10)}"></label>
-      </section>`}
-      <p class="error small" id="missing" role="alert" hidden></p>
-      ${isFree(insp) ? '<button class="btn primary big" id="add-item" type="button">+ Add next item</button>'
-        : '<button class="btn add-item" id="add-item" type="button">+ Add an item not on the checklist</button>'}
-      ${gpsDenied ? '<p class="small warn-text">Location is off — the report will show no GPS. Allow location for this site in your browser settings.</p>' : ''}
-      <div class="row between sticky-bar">
-        ${n > 1 ? `<a class="btn" href="#/inspect/${id}/${n - 1}">← Previous</a>` : '<span></span>'}
-        <a class="btn primary" id="next" href="${last ? `#/inspect/${id}/finish` : `#/inspect/${id}/${n + 1}`}">${last ? 'Review &amp; sign →' : 'Next →'}</a>
-      </div>`);
+    const view = shell({ title: `Item ${n} of ${total}`, subtitle: insp.site_name, back: base(id), focus: true, body: `
+      <div class="progress thin" aria-hidden="true"><span style="width:${(n / total) * 100}%"></span></div>
+      <header class="item-head">
+        <p class="eyebrow">${esc(itemTitle(insp))}</p>
+        <h1>${esc(it.label)}</h1>
+        ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
+        ${it.added ? `<p class="small">${free ? '' : '<span class="badge neutral">Added on site</span> '}<button class="link danger" id="remove-item">Remove this item</button></p>` : ''}
+      </header>
+      <section class="block-section"><div class="row-between"><h3>${ba ? 'Before &amp; after' : 'Photos'}</h3><span class="muted small" id="photo-count"></span></div>
+        <div id="photos"></div>
+        <div class="photo-actions">
+          <label class="btn primary lg grow">${icon('camera')} ${ba ? 'Before photo' : 'Take photo'}<input type="file" accept="image/*" capture="environment" hidden data-add></label>
+          <label class="btn lg">${icon('image')} Gallery<input type="file" accept="image/*" multiple hidden data-add></label>
+        </div></section>
+      ${ba ? '' : `<section class="block-section"><h3>Score</h3>
+        <div class="score-grid" role="radiogroup" aria-label="Score from 1 to 10">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
+          `<button type="button" role="radio" data-score="${v}" class="${v < LOW_SCORE ? 'low' : ''}" aria-checked="${it.score === v}">${v}</button>`).join('')}</div>
+        <p class="score-word" id="score-word" aria-live="polite"></p>
+        <div id="plan"></div></section>`}
+      <section class="block-section" id="note-wrap"></section>
+      <p class="form-error" id="missing" role="alert" hidden></p>
+      <button class="btn ${free ? 'primary block lg' : 'dashed block'}" id="add-item">${icon('plus')} ${free ? 'Add next item' : 'Add an item not on the checklist'}</button>
+      ${gpsDenied ? '<p class="note-box small">Location is off — the report will show no GPS. Allow location for this site in Settings.</p>' : ''}
+      <div class="bottom-bar two">
+        ${n > 1 ? `<a class="btn lg" href="${base(id)}/item/${n - 1}">${icon('back')} Previous</a>` : `<a class="btn lg" href="${base(id)}">${icon('list')} All items</a>`}
+        <a class="btn primary lg" id="next" href="${last ? `${base(id)}/review` : `${base(id)}/item/${n + 1}`}">${last ? 'Review' : 'Next'} ${icon('chevron')}</a>
+      </div>` });
 
-    const $thumbs = view.querySelector('#thumbs');
-    const urls = [];
-    // every photo of this item, uploaded or still in the outbox, as {id, phase, pair_id, src, local}
-    const photosNow = async () => {
-      urls.splice(0).forEach(URL.revokeObjectURL);
-      const local = (await pendingPhotos(id, it.item_key)).map((e) => {
-        const src = URL.createObjectURL(e.body); urls.push(src);
-        return { id: e.id, phase: e.phase, pair_id: e.pairId, src, local: true };
-      });
-      return [...insp.photos.filter((p) => p.item_key === it.item_key).map((p) => ({ ...p, src: `/api/photos/${p.id}` })), ...local];
-    };
-    const fig = (p, alt) => `<figure class="${p.local ? 'pending' : ''}"><img src="${p.src}" alt="${alt}">
-      <button class="thumb-del" data-del="${p.id}" ${p.local ? 'data-local="1"' : ''} aria-label="Delete ${alt.toLowerCase()}">✕</button>
-      ${p.local ? '<span>Uploading</span>' : ''}</figure>`;
+    // photos
+    const $photos = view.querySelector('#photos');
+    const upState = (p) => !p.local ? '' : `<span class="up-state">${sync.uploadingId === p.id ? `${icon('sync', 'spin')} Uploading…`
+      : navigator.onLine ? `${icon('clock')} Queued` : `${icon('offline')} Waiting for signal`}</span>`;
+    const fig = (p, label) => `<figure class="ph${p.local ? ' pending' : ''}"><button class="ph-open" data-view="${p.id}" aria-label="View ${label.toLowerCase()}">
+      <img src="${p.src}" alt="${label}" loading="lazy" decoding="async"></button>${upState(p)}</figure>`;
+    let shown = [];
     const render = async () => {
-      const all = await photosNow();
+      const all = (await allPhotos(insp)).filter((p) => p.item_key === it.item_key);
+      view.querySelector('#photo-count').textContent = all.length ? `${all.length} photo${all.length === 1 ? '' : 's'}` : '';
       if (!ba) {
-        $thumbs.innerHTML = all.map((p) => fig(p, 'Photo')).join('') || '<p class="muted small">No photos yet.</p>';
+        shown = all.map((p) => ({ ...p, label: 'Photo' }));
+        $photos.innerHTML = all.length ? `<div class="ph-grid">${all.map((p) => fig(p, 'Photo')).join('')}</div>`
+          : `<div class="ph-empty">${icon('camera')}<span>No photos yet</span></div>`;
         return;
       }
       const befores = all.filter((p) => p.phase !== 'after');
-      const afterOf = (bid) => all.find((p) => p.phase === 'after' && p.pair_id === bid);
-      const orphans = all.filter((p) => p.phase === 'after' && !befores.some((x) => x.id === p.pair_id));
-      $thumbs.innerHTML = befores.map((p) => {
-        const after = afterOf(p.id);
-        return `<div class="pair">${fig(p, 'Before photo')}${after ? fig(after, 'After photo')
-          : `<label class="after-slot">+ After photo<input type="file" accept="image/*" hidden data-pair="${p.id}"></label>`}</div>`;
-      }).join('') + orphans.map((p) => `<div class="pair"><div class="after-slot muted">—</div>${fig(p, 'After photo')}</div>`).join('')
-        || '<p class="muted small">Take the before photos now. After the clean, come back to this inspection and add an after photo next to each one.</p>';
+      const afterOf = (b) => all.find((p) => p.phase === 'after' && p.pair_id === b.id);
+      const orphans = all.filter((p) => p.phase === 'after' && !befores.some((b) => b.id === p.pair_id));
+      shown = [...befores.flatMap((b) => [{ ...b, label: 'Before' }, ...(afterOf(b) ? [{ ...afterOf(b), label: 'After' }] : [])]), ...orphans.map((p) => ({ ...p, label: 'After' }))];
+      const head = '<div class="pair-label"><span>Before</span><span>After</span></div>';
+      $photos.innerHTML = befores.length || orphans.length ? `<div class="pairs">${befores.map((b) => {
+        const a = afterOf(b);
+        return `<div class="pair">${head}${fig(b, 'Before photo')}${a ? fig(a, 'After photo') : `<label class="after-slot">${icon('camera')}<span>Take after photo</span>
+            <input type="file" accept="image/*" hidden data-pair="${b.id}"></label>`}</div>`;
+      }).join('')}${orphans.map((a) => `<div class="pair">${head}<div class="after-slot muted">—</div>${fig(a, 'After photo')}</div>`).join('')}</div>`
+        : `<div class="ph-empty">${icon('camera')}<span>Take the before photos now. After the clean, come back and add an after photo next to each one.</span></div>`;
     };
     render();
-    const off = outbox.onChange(() => document.body.contains($thumbs) ? render() : off());
+    const off = outbox.onChange(() => (document.body.contains($photos) ? render() : off()));
 
-    const addFiles = async (files, phase = ba ? 'before' : null, pairId = null) => {
+    async function addFiles(files, phase = ba ? 'before' : null, pairId = null) {
+      let added = 0;
       for (const file of files) {
         try {
           const blob = await shrink(file);
@@ -416,10 +421,11 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
           });
           await outbox.put({ id: pid, inspectionId: id, itemKey: it.item_key, kind: 'photo', phase, pairId, method: 'PUT',
             url: `/api/inspections/${id}/photos/${pid}?${q}`, body: blob, contentType: blob.type });
-        } catch (e) { toast(e.message, true); }
+          added++;
+        } catch (e) { toast(e.message, { error: true }); }
       }
-      render();
-    };
+      if (added) toast(added > 1 ? `${added} photos added` : phase === 'after' ? 'After photo added' : 'Photo added');
+    }
     view.addEventListener('change', (e) => {
       const input = e.target;
       if (input.type !== 'file' || !input.files.length) return;
@@ -427,19 +433,21 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       else if ('add' in input.dataset) addFiles([...input.files]);
       input.value = '';
     });
-
-    $thumbs.addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-del]'); if (!b) return;
-      const pid = b.dataset.del, all = await photosNow();
-      const linked = all.filter((p) => p.phase === 'after' && p.pair_id === pid); // goes with its before photo
-      if (!(await confirmDialog(linked.length ? 'Delete this before photo and its after photo?' : 'Delete this photo?'))) return;
-      for (const p of [{ id: pid, local: !!b.dataset.local }, ...linked]) {
-        if (p.local) { uploading.delete(p.id); await outbox.remove(p.id); continue; }
-        insp.photos = insp.photos.filter((x) => x.id !== p.id);
+    async function deletePhoto(p) {
+      const linked = p.phase !== 'after' ? shown.filter((x) => x.phase === 'after' && x.pair_id === p.id) : [];
+      if (!(await confirmSheet(linked.length ? 'Delete this before photo and its after photo?' : 'Delete this photo?', { okLabel: 'Delete' }))) return false;
+      for (const x of [p, ...linked]) {
+        if (x.local) { uploading.delete(x.id); await outbox.remove(x.id); continue; }
+        insp.photos = insp.photos.filter((y) => y.id !== x.id);
         // the server deletes a before photo's pair itself, so only queue the one delete
-        if (p.id === pid) await outbox.put({ id: `delete:${pid}`, inspectionId: id, kind: 'delete', photoId: pid, method: 'DELETE', url: `/api/inspections/${id}/photos/${pid}` });
+        if (x.id === p.id) await outbox.put({ id: `delete:${p.id}`, inspectionId: id, kind: 'delete', photoId: p.id, method: 'DELETE', url: `/api/inspections/${id}/photos/${p.id}` });
       }
-      render();
+      render(); toast('Photo deleted');
+      return true;
+    }
+    $photos.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]'); if (!b) return;
+      viewer(shown, Math.max(0, shown.findIndex((p) => p.id === b.dataset.view)), { onDelete: (k) => deletePhoto(shown[k]) });
     });
 
     // note, score and action plan are saved together as one queued update per item
@@ -452,33 +460,70 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       outbox.put({ id: `note:${id}:${it.item_key}`, inspectionId: id, itemKey: it.item_key, kind: 'note', method: 'PUT',
         url: `/api/inspections/${id}/items/${encodeURIComponent(it.item_key)}`, body: JSON.stringify(fields()), contentType: 'application/json' });
     };
-    const changed = (now = false) => { dirty = true; view.querySelector('#missing').hidden = true; clearTimeout(saveTimer); now ? saveItem() : (saveTimer = setTimeout(saveItem, 800)); };
-    view.querySelector('#note').addEventListener('input', (e) => { it.note = e.target.value; changed(); });
-    view.querySelectorAll('[data-f]').forEach((el) => el.addEventListener('input', () => { it[el.dataset.f] = el.value; changed(); }));
-    view.querySelectorAll('[data-score]').forEach((b) => b.addEventListener('click', () => {
-      it.score = +b.dataset.score;
-      view.querySelectorAll('[data-score]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      const plan = view.querySelector('#plan');
-      plan.hidden = it.score >= LOW_SCORE;
-      if (!plan.hidden) plan.querySelector('textarea').focus();
-      changed(true);
-    }));
+    const changed = (now = false) => { dirty = true; view.querySelector('#missing').hidden = true; clearTimeout(saveTimer); now ? saveItem() : (saveTimer = setTimeout(saveItem, 700)); };
     view.addEventListener('focusout', saveItem);
     addEventListener('hashchange', saveItem, { once: true });
-    view.querySelector('#add-item').addEventListener('click', () => { saveItem(); addItem(insp); });
+
+    // notes stay folded away until needed
+    const $note = view.querySelector('#note-wrap');
+    const renderNote = (open) => {
+      $note.innerHTML = open || it.note?.trim()
+        ? `<label class="field"><span>Notes</span><textarea id="note" rows="3" placeholder="Anything the office should know, e.g. grease behind the fryer">${esc(it.note)}</textarea></label>`
+        : `<button class="add-note" id="open-note">${icon('pen')} Add a note</button>`;
+      $note.querySelector('#open-note')?.addEventListener('click', () => { renderNote(true); $note.querySelector('textarea').focus(); });
+      $note.querySelector('textarea')?.addEventListener('input', (e) => { it.note = e.target.value; changed(); });
+    };
+    renderNote(false);
+
+    // score + urgent action plan
+    if (!ba) {
+      const $word = view.querySelector('#score-word'), $plan = view.querySelector('#plan');
+      const renderScore = () => {
+        $word.innerHTML = it.score ? `<strong>${it.score}</strong> · ${scoreWord(it.score)}` : 'Tap a score';
+        $word.className = `score-word${it.score && it.score < LOW_SCORE ? ' low' : ''}`;
+        if (!(it.score && it.score < LOW_SCORE)) { $plan.innerHTML = ''; return; }
+        $plan.innerHTML = planDone(it)
+          ? `<div class="action-card"><div class="row-between"><strong>${icon('alert')} Urgent action</strong><button class="link" id="edit-plan">Edit</button></div>
+              <p>${esc(it.action_what)}</p><p class="small muted">${esc(it.action_who)} · by ${esc(new Date(`${it.action_due}T12:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}</p></div>`
+          : `<div class="action-card needed"><strong>${icon('alert')} Action required</strong>
+              <p class="small">Scores below ${LOW_SCORE} need an action plan. The office is alerted when you submit.</p>
+              <button class="btn danger-solid block" id="edit-plan">${icon('plus')} Create action</button></div>`;
+        $plan.querySelector('#edit-plan').onclick = async () => {
+          const v = await sheet({
+            title: 'Urgent action', text: `${it.label} scored ${it.score}/10. How will it be put right?`, submitLabel: 'Save action',
+            fields: [
+              { name: 'action_what', label: 'What needs doing', type: 'textarea', value: it.action_what, required: true, placeholder: 'e.g. Re-clean behind the fryers and degrease the drain' },
+              { name: 'action_who', label: 'Assigned to', value: it.action_who, required: true, placeholder: 'Name' },
+              { name: 'action_due', label: 'Deadline', type: 'date', value: it.action_due || new Date(Date.now() + 86400000).toISOString().slice(0, 10), min: new Date().toISOString().slice(0, 10), required: true },
+            ],
+          });
+          if (!v) return;
+          Object.assign(it, { action_what: v.action_what.trim(), action_who: v.action_who.trim(), action_due: v.action_due });
+          changed(true); renderScore(); toast('Action saved');
+        };
+      };
+      renderScore();
+      view.querySelectorAll('[data-score]').forEach((b) => b.addEventListener('click', () => {
+        it.score = +b.dataset.score;
+        view.querySelectorAll('[data-score]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+        changed(true); renderScore();
+        navigator.vibrate?.(8);
+      }));
+    }
+
+    view.querySelector('#add-item').onclick = () => { saveItem(); addItem(insp); };
     view.querySelector('#remove-item')?.addEventListener('click', async () => {
-      if (!(await confirmDialog(`Remove "${it.label}" and its photos from this inspection?`, 'Remove'))) return;
+      if (!(await confirmSheet(`Remove "${it.label}"?`, { text: 'Its photos and notes are removed from this inspection.', okLabel: 'Remove' }))) return;
       clearTimeout(saveTimer); dirty = false;
       const pending = (await outbox.all()).filter((e) => e.inspectionId === id && e.itemKey === it.item_key);
       for (const e of pending) { uploading.delete(e.id); await outbox.remove(e.id); }
-      // never reached the server? then dropping the queued add is enough
-      if (!pending.some((e) => e.kind === 'additem')) {
+      if (!pending.some((e) => e.kind === 'additem')) { // never reached the server? dropping the queued add is enough
         await outbox.put({ id: `delitem:${id}:${it.item_key}`, inspectionId: id, itemKey: it.item_key, kind: 'delitem', method: 'DELETE',
           url: `/api/inspections/${id}/items/${encodeURIComponent(it.item_key)}` });
       }
       insp.items = insp.items.filter((x) => x !== it);
       insp.photos = insp.photos.filter((p) => p.item_key !== it.item_key);
-      location.hash = `#/inspect/${id}`;
+      location.hash = base(id);
     });
     // can't move on until the item is scored (and planned if low)
     view.querySelector('#next').addEventListener('click', (e) => {
@@ -486,54 +531,94 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog,
       if (!problem) return;
       e.preventDefault();
       const m = view.querySelector('#missing'); m.textContent = problem; m.hidden = false;
-      (view.querySelector('#plan:not([hidden])') || view.querySelector('.score-pick'))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const target = view.querySelector('.action-card.needed') || view.querySelector('.score-grid');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.classList.remove('shake'); void target?.offsetWidth; target?.classList.add('shake');
     });
   }
 
-  // review + signature + submit
-  async function finish(id) {
-    const insp = await load(id);
-    if (!editable(insp)) { location.replace(`#/inspect/${id}`); return; }
-    const pending = (await outbox.all()).filter((e) => e.kind === 'photo' && e.inspectionId === id);
-    const counts = insp.items.map((it) => insp.photos.filter((p) => p.item_key === it.item_key).length
-      + pending.filter((p) => p.itemKey === it.item_key).length);
-    const empty = insp.items.filter((it, i) => !counts[i] && !it.note.trim());
-    const allPhotos = [...insp.photos, ...pending.map((e) => ({ id: e.id, phase: e.phase, pair_id: e.pairId }))];
-    if (!insp.items.length) { location.replace(`#/inspect/${id}`); return; }
+  // ── review ──
+  async function review(id) {
+    const insp = await loadInspection(id);
+    if (!editable(insp) || !insp.items.length) { location.replace(base(id)); return; }
+    const photos = await allPhotos(insp);
+    const states = insp.items.map((it) => itemState(insp, it, photos));
     const problems = insp.items.map((it, i) => [i, itemProblem(it, insp.mode)]).filter(([, p]) => p);
-    const noAfter = insp.mode === 'before_after'
-      ? allPhotos.filter((b) => b.phase === 'before' && !allPhotos.some((a) => a.phase === 'after' && a.pair_id === b.id)).length : 0;
-    const view = page(`
-      <p><a href="#/inspect/${id}/${insp.items.length}">← Back to items</a></p>
-      <h1>Review &amp; sign</h1>
-      ${avg(insp.items) ? `<p class="avg">Overall score <strong>${avg(insp.items)}</strong> / 10</p>` : ''}
-      <ul class="list">${insp.items.map((it, i) => `<li><a class="list-link" href="#/inspect/${id}/${i + 1}">
-        <span class="grow">${i + 1}. ${esc(it.label)}</span>
-        <span class="muted small">${counts[i]} photo${counts[i] === 1 ? '' : 's'}${it.note.trim() ? ' · note' : ''}</span>${scorePill(it)}</a></li>`).join('')}</ul>
-      ${problems.length ? `<div class="card urgent"><strong>Before you can submit:</strong><ul>${problems.map(([i, p]) =>
-        `<li><a href="#/inspect/${id}/${i + 1}">${esc(insp.items[i].label)}</a> — ${esc(p.toLowerCase())}</li>`).join('')}</ul></div>` : ''}
-      ${noAfter ? `<p class="warn-text small">${noAfter} before photo${noAfter === 1 ? ' has' : 's have'} no after photo yet.</p>` : ''}
-      ${empty.length ? `<p class="warn-text small">${empty.length} item${empty.length === 1 ? ' has' : 's have'} no photo or note: ${empty.map((i) => esc(i.label)).join(', ')}.</p>` : ''}
-      <section class="card stack">
-        <div class="row between"><strong>Your signature</strong><button class="btn" id="clear">Clear</button></div>
+    const done = states.filter((s) => s === 'done').length, total = insp.items.length;
+    const avg = avgScore(insp.items), low = insp.items.filter((it) => it.score && it.score < LOW_SCORE);
+    const afterPending = insp.mode === 'before_after' ? states.filter((s) => s === 'after').length : 0;
+    const notes = insp.items.filter((it) => it.note?.trim()).length;
+    const stat = (label, value, tone = '') => `<div class="stat ${tone}"><span>${label}</span><strong>${value}</strong></div>`;
+    const view = shell({ title: 'Review', subtitle: insp.site_name, back: `${base(id)}/item/${total}`, focus: true, body: `
+      <section class="card">
+        <div class="row-between"><h2>Completion</h2>${done === total ? `<span class="badge green">${icon('check')} Complete</span>` : `<span class="badge amber">${total - done} to go</span>`}</div>
+        ${progressBar(done, total)}
+      </section>
+      <div class="stats">
+        ${avg ? stat('Overall score', `${avg}<small>/10</small>`, avg < LOW_SCORE ? 'bad' : 'good') : stat('Inspection', esc(modeLabel(insp)))}
+        ${insp.mode === 'check' ? stat('Issues', low.length, low.length ? 'bad' : '') : stat('After photos due', afterPending, afterPending ? 'warn' : '')}
+        ${stat('Photos', photos.length)}${stat('Notes', notes)}
+        ${insp.mode === 'check' ? stat('Actions', low.filter(planDone).length, low.length ? 'warn' : '') : ''}
+      </div>
+      ${problems.length ? `<section class="card warn-card"><h3>${icon('alert')} Before you can submit</h3><ul class="plain">${problems.map(([i, p]) =>
+        `<li><a href="${base(id)}/item/${i + 1}"><strong>${esc(insp.items[i].label)}</strong> — ${esc(p)}</a></li>`).join('')}</ul></section>` : ''}
+      ${afterPending ? `<p class="note-box">${afterPending} item${afterPending === 1 ? ' still needs' : 's still need'} after photos. You can still submit.</p>` : ''}
+      <h3 class="section-h">Items</h3>
+      <div class="list-card">${insp.items.map((it, i) => `<a class="row-link" href="${base(id)}/item/${i + 1}">
+        <span class="item-num sm state-${states[i]}">${states[i] === 'done' ? icon('check') : i + 1}</span>
+        <span class="row-main"><strong>${esc(it.label)}</strong><small>${STATE_LABEL[states[i]]}</small></span>${scoreBadge(it.score)}${icon('chevron', 'row-chev')}</a>`).join('')}</div>
+      <div class="bottom-bar"><a class="btn primary block lg${problems.length ? ' disabled' : ''}" ${problems.length ? 'aria-disabled="true" href="#"' : `href="${base(id)}/sign"`}>
+        Continue to sign-off ${icon('chevron')}</a></div>` });
+    view.querySelector('.bottom-bar .disabled')?.addEventListener('click', (e) => { e.preventDefault(); toast('Finish the items listed above first', { error: true }); });
+  }
+
+  // ── sign-off + submit ──
+  async function sign(id) {
+    const insp = await loadInspection(id);
+    if (!editable(insp) || !insp.items.length || insp.items.some((it) => itemProblem(it, insp.mode))) { location.replace(`${base(id)}/review`); return; }
+    const view = shell({ title: 'Sign-off', subtitle: insp.site_name, back: `${base(id)}/review`, focus: true, body: `
+      <section class="card">
+        <dl class="facts"><dt>Site</dt><dd>${esc(insp.site_name)}</dd><dt>Inspection</dt><dd>${esc(itemTitle(insp))}</dd>
+          <dt>Supervisor</dt><dd>${esc(me().name)}</dd><dt>Date</dt><dd>${esc(fmtDateTime(new Date()))}</dd></dl>
+      </section>
+      <section class="card sign-card">
+        <div class="row-between"><h3>Your signature</h3><button class="btn sm" id="clear">Clear</button></div>
         <canvas id="sig" class="sig" aria-label="Sign here with your finger"></canvas>
         <p class="muted small">By signing you confirm this inspection was carried out on site.</p>
-        <button class="btn primary big" id="submit" disabled>Submit inspection</button>
-      </section>`);
+      </section>
+      <div class="bottom-bar"><button class="btn primary block lg" id="submit" disabled>${icon('send')} Submit inspection</button></div>` });
     const pad = signaturePad(view.querySelector('#sig'));
     const $submit = view.querySelector('#submit');
-    pad.onInk((inked) => { $submit.disabled = !inked || problems.length > 0; });
+    pad.onInk((inked) => { $submit.disabled = !inked; });
     view.querySelector('#clear').onclick = () => pad.clear();
     $submit.onclick = async () => {
-      $submit.disabled = true;
+      $submit.disabled = true; $submit.textContent = 'Submitting…';
       const end_gps = await currentGps(5000);
       await outbox.put({ id: `submit:${id}`, inspectionId: id, kind: 'submit', method: 'POST', url: `/api/inspections/${id}/submit`,
         body: JSON.stringify({ inspector_sig: pad.dataUrl(), end_gps, finished_at: new Date().toISOString() }), contentType: 'application/json' });
-      current = null;
-      toast(navigator.onLine ? 'Inspection submitted' : 'Saved — it will send when you have signal');
-      location.hash = '#/inspect';
+      insp.submitting = true;
+      location.hash = `${base(id)}/done`;
     };
   }
 
-  return { home, start, overview, item, finish };
+  // ── submitted ──
+  async function done(id) {
+    const insp = await loadInspection(id);
+    const avg = avgScore(insp.items);
+    const waiting = !navigator.onLine && (await outbox.all()).some((e) => e.inspectionId === id);
+    shell({ title: '', back: '#/home', focus: true, body: `
+      <div class="success">
+        <div class="success-ic">${icon(waiting ? 'cloud' : 'check')}</div>
+        <h1>${waiting ? 'Saved on this phone' : 'Inspection submitted'}</h1>
+        <p class="muted">${waiting ? 'It will be sent automatically as soon as you have signal.' : 'The office has been notified by email.'}</p>
+        <section class="card">
+          <dl class="facts"><dt>Site</dt><dd>${esc(insp.site_name)}</dd><dt>Inspection</dt><dd>${esc(itemTitle(insp))}</dd>
+            ${avg ? `<dt>Score</dt><dd>${scoreBadge(avg)}</dd>` : ''}<dt>Submitted</dt><dd>Just now</dd></dl>
+        </section>
+      </div>
+      <div class="bottom-bar two"><a class="btn lg" href="${base(id)}">View inspection</a><a class="btn primary lg" href="#/home">Back to Home</a></div>` });
+    current = null;
+  }
+
+  return { start, detail, item, review, sign, done, addItem };
 }

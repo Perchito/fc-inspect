@@ -91,6 +91,14 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 const VERSION = Date.now().toString(36);
 const indexHtml = readFileSync('public/index.html', 'utf8').replaceAll('__V__', VERSION);
 app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(indexHtml));
+// front-end modules get the same stamp, so `import './ui.js?v=__V__'` resolves to one shared module per deploy
+const jsCache = new Map();
+app.get(/^\/[\w-]+\.js$/, (req, res, next) => {
+  if (!jsCache.has(req.path)) {
+    try { jsCache.set(req.path, readFileSync(`public${req.path}`, 'utf8').replaceAll('__V__', VERSION)); } catch { return next(); }
+  }
+  res.set('Cache-Control', 'no-cache').type('js').send(jsCache.get(req.path));
+});
 app.use(express.static('public', { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
 // Postgres errors that are the caller's fault, in plain words
