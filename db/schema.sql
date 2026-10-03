@@ -112,3 +112,12 @@ create table if not exists comments (
   body          text not null,
   created_at    timestamptz not null default now()
 );
+
+-- before & after inspections (deep cleans): photos come in pairs, an "after" photo
+-- points at the "before" photo it was taken to match
+alter table inspections add column if not exists mode text not null default 'check';
+do $$ begin
+  alter table inspections add constraint inspections_mode_check check (mode in ('check', 'before_after'));
+exception when duplicate_object then null; end $$;
+alter table photos add column if not exists phase text check (phase in ('before', 'after'));
+alter table photos add column if not exists pair_id uuid references photos(id) on delete set null;

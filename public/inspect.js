@@ -146,7 +146,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
   outbox.onChange((all) => {
     const now = new Map(all.filter((e) => e.kind === 'photo').map((e) => [e.id, e]));
     for (const [pid, e] of uploading) {
-      if (!now.has(pid) && current?.id === e.inspectionId) current.photos.push({ id: pid, item_key: e.itemKey });
+      if (!now.has(pid) && current?.id === e.inspectionId) current.photos.push({ id: pid, item_key: e.itemKey, phase: e.phase, pair_id: e.pairId });
     }
     uploading = now;
   });
@@ -160,7 +160,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     const row = (i) => {
       const [label, cls] = submitting.has(i.id) ? ['Sending…', 'pill'] : STATUS[i.status];
       return `<li><a class="list-link" href="#/inspect/${i.id}">
-        <span class="grow"><strong>${esc(i.site_name)}</strong><br><span class="muted small">${esc(i.client_name)} · ${esc(i.template_name)} · ${fmt(i.started_at)}</span></span>
+        <span class="grow"><strong>${esc(i.site_name)}</strong><br><span class="muted small">${i.mode === 'before_after' ? 'Before &amp; after · ' : ''}${esc(i.client_name)} · ${esc(i.template_name)} · ${fmt(i.started_at)}</span></span>
         <span class="${cls}">${label}</span></a></li>`;
     };
     page(`
@@ -191,20 +191,32 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     $list.onclick = async (e) => {
       const b = e.target.closest('[data-site]'); if (!b) return;
       const site = sites.find((s) => s.id === b.dataset.site);
-      if (site.templates.length === 1) return begin(site, site.templates[0]);
+      if (site.templates.length === 1) return chooseMode(site, site.templates[0]);
       $list.innerHTML = `<li class="list-row"><strong>${esc(site.name)}</strong> — which checklist?</li>` + site.templates.map((t) =>
         `<li><button class="list-link as-button" data-template="${t.id}"><span class="grow">${esc(t.name)}</span><span class="muted small">${t.item_count} items</span></button></li>`).join('');
-      $list.onclick = (ev) => { const tb = ev.target.closest('[data-template]'); if (tb) begin(site, site.templates.find((t) => t.id === tb.dataset.template)); };
+      $list.onclick = (ev) => { const tb = ev.target.closest('[data-template]'); if (tb) chooseMode(site, site.templates.find((t) => t.id === tb.dataset.template)); };
     };
   }
 
-  async function begin(site, template) {
+  function chooseMode(site, template) {
+    const view = page(`
+      <p><a href="#/inspect/new">← Back</a></p>
+      <h1>What kind of inspection?</h1>
+      <p class="muted">${esc(site.name)} · ${esc(template.name)}</p>
+      <button class="card mode-pick" data-mode="check"><strong>Quality check</strong>
+        <span class="muted">Photos and notes of how the site looks now.</span></button>
+      <button class="card mode-pick" data-mode="before_after"><strong>Before &amp; after</strong>
+        <span class="muted">For deep cleans: take before photos now, come back after the clean and add an after photo next to each one.</span></button>`);
+    view.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => begin(site, template, b.dataset.mode));
+  }
+
+  async function begin(site, template, mode) {
     page(`<p class="center">Starting inspection at <strong>${esc(site.name)}</strong>…<br><span class="muted small">Getting your location</span></p>`);
     const id = crypto.randomUUID(), started_at = new Date().toISOString();
     const start_gps = await currentGps();
     for (;;) {
       try {
-        await post('/inspections', { id, site_id: site.id, template_id: template.id, start_gps, started_at });
+        await post('/inspections', { id, site_id: site.id, template_id: template.id, mode, start_gps, started_at });
         location.hash = `#/inspect/${id}/1`;
         return;
       } catch (err) {
@@ -242,16 +254,22 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
       <p><a href="#/inspect">← My inspections</a></p>
       <section class="card">
         <div class="row between"><h1>${esc(insp.site_name)}</h1><span class="${cls}">${label}</span></div>
-        <p class="muted">${esc(insp.client_name)} · ${esc(insp.template_name)} · started ${fmt(insp.started_at)}</p>
+        <p class="muted">${insp.mode === 'before_after' ? 'Before &amp; after · ' : ''}${esc(insp.client_name)} · ${esc(insp.template_name)} · started ${fmt(insp.started_at)}</p>
+        ${insp.mode === 'before_after' && can ? '<p class="small">Leave this inspection open during the clean, then come back and add the after photos.</p>' : ''}
         ${insp.comments.length ? `<div class="comments">${insp.comments.map((c) => `<p><strong>${esc(c.name)}:</strong> ${esc(c.body)}</p>`).join('')}</div>` : ''}
       </section>
       <ol class="walk-list">${insp.items.map((it, n) => {
         const photos = insp.photos.filter((p) => p.item_key === it.item_key);
         const local = pending.filter((p) => p.itemKey === it.item_key);
+        const img = (p) => p ? `<img src="/api/photos/${p.id}" alt="" loading="lazy">` : '<span class="thumb-pending">—</span>';
+        const pairs = insp.mode === 'before_after' && photos.length
+          ? `<div class="pairs small-pairs">${photos.filter((p) => p.phase !== 'after').map((b) =>
+              `<div class="pair">${img(b)}${img(photos.find((a) => a.pair_id === b.id))}</div>`).join('')}</div>` : '';
         return `<li class="card">
           <div class="row between"><strong>${n + 1}. ${esc(it.label)}</strong>
             ${can ? `<a class="btn" href="#/inspect/${id}/${n + 1}">Edit</a>` : ''}</div>
-          ${photos.length + local.length ? `<div class="thumbs">${photos.map((p) => `<img src="/api/photos/${p.id}" alt="" loading="lazy">`).join('')}
+          ${pairs ? pairs + (local.length ? `<p class="muted small">${local.length} photo${local.length === 1 ? '' : 's'} uploading</p>` : '')
+            : photos.length + local.length ? `<div class="thumbs">${photos.map((p) => `<img src="/api/photos/${p.id}" alt="" loading="lazy">`).join('')}
             ${local.map(() => '<span class="thumb-pending">Uploading</span>').join('')}</div>` : '<p class="muted small">No photos</p>'}
           ${it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
         </li>`;
@@ -269,22 +287,23 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     });
   }
 
-  // one item: photos + note
+  // one item: photos + note. Before & after inspections show photo pairs instead of a grid.
   async function item(id, n) {
     const insp = await load(id);
     if (!editable(insp)) { location.replace(`#/inspect/${id}`); return; }
     n = Math.min(Math.max(1, +n), insp.items.length);
-    const it = insp.items[n - 1], last = n === insp.items.length;
+    const it = insp.items[n - 1], last = n === insp.items.length, ba = insp.mode === 'before_after';
     watchGps();
     const view = page(`
       <div class="walk-top"><a href="#/inspect/${id}">← ${esc(insp.site_name)}</a><span class="muted small">Item ${n} of ${insp.items.length}</span></div>
       <div class="progress" aria-hidden="true"><span style="width:${(n / insp.items.length) * 100}%"></span></div>
       <h1>${esc(it.label)}</h1>
       ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
-      <div class="thumbs big" id="thumbs"></div>
+      ${ba ? '<div class="pair-head" aria-hidden="true"><span>Before</span><span>After</span></div>' : ''}
+      <div class="${ba ? 'pairs' : 'thumbs big'}" id="thumbs"></div>
       <div class="row photo-btns">
-        <label class="btn primary grow center-text">Take photo<input type="file" accept="image/*" capture="environment" hidden id="cam"></label>
-        <label class="btn grow center-text">From gallery<input type="file" accept="image/*" multiple hidden id="gallery"></label>
+        <label class="btn primary grow center-text">${ba ? 'Take before photo' : 'Take photo'}<input type="file" accept="image/*" capture="environment" hidden data-add></label>
+        <label class="btn grow center-text">From gallery<input type="file" accept="image/*" multiple hidden data-add></label>
       </div>
       <label>Notes<textarea id="note" rows="4" placeholder="What did you find? e.g. bins not emptied, streaks on glass">${esc(it.note)}</textarea></label>
       ${gpsDenied ? '<p class="small warn-text">Location is off — the report will show no GPS. Allow location for this site in your browser settings.</p>' : ''}
@@ -295,44 +314,74 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
 
     const $thumbs = view.querySelector('#thumbs');
     const urls = [];
-    const renderThumbs = async () => {
+    // every photo of this item, uploaded or still in the outbox, as {id, phase, pair_id, src, local}
+    const photosNow = async () => {
       urls.splice(0).forEach(URL.revokeObjectURL);
-      const local = await pendingPhotos(id, it.item_key);
-      const server = insp.photos.filter((p) => p.item_key === it.item_key);
-      $thumbs.innerHTML = server.map((p) => `<figure><img src="/api/photos/${p.id}" alt="Photo"><button class="thumb-del" data-del="${p.id}" aria-label="Delete photo">✕</button></figure>`).join('')
-        + local.map((e) => { const u = URL.createObjectURL(e.body); urls.push(u); return `<figure class="pending"><img src="${u}" alt="Photo waiting to upload"><button class="thumb-del" data-del-local="${e.id}" aria-label="Delete photo">✕</button><span>Uploading</span></figure>`; }).join('')
-        || '<p class="muted small">No photos yet.</p>';
+      const local = (await pendingPhotos(id, it.item_key)).map((e) => {
+        const src = URL.createObjectURL(e.body); urls.push(src);
+        return { id: e.id, phase: e.phase, pair_id: e.pairId, src, local: true };
+      });
+      return [...insp.photos.filter((p) => p.item_key === it.item_key).map((p) => ({ ...p, src: `/api/photos/${p.id}` })), ...local];
     };
-    renderThumbs();
-    const off = outbox.onChange(() => document.body.contains($thumbs) ? renderThumbs() : off());
+    const fig = (p, alt) => `<figure class="${p.local ? 'pending' : ''}"><img src="${p.src}" alt="${alt}">
+      <button class="thumb-del" data-del="${p.id}" ${p.local ? 'data-local="1"' : ''} aria-label="Delete ${alt.toLowerCase()}">✕</button>
+      ${p.local ? '<span>Uploading</span>' : ''}</figure>`;
+    const render = async () => {
+      const all = await photosNow();
+      if (!ba) {
+        $thumbs.innerHTML = all.map((p) => fig(p, 'Photo')).join('') || '<p class="muted small">No photos yet.</p>';
+        return;
+      }
+      const befores = all.filter((p) => p.phase !== 'after');
+      const afterOf = (bid) => all.find((p) => p.phase === 'after' && p.pair_id === bid);
+      const orphans = all.filter((p) => p.phase === 'after' && !befores.some((x) => x.id === p.pair_id));
+      $thumbs.innerHTML = befores.map((p) => {
+        const after = afterOf(p.id);
+        return `<div class="pair">${fig(p, 'Before photo')}${after ? fig(after, 'After photo')
+          : `<label class="after-slot">+ After photo<input type="file" accept="image/*" hidden data-pair="${p.id}"></label>`}</div>`;
+      }).join('') + orphans.map((p) => `<div class="pair"><div class="after-slot muted">—</div>${fig(p, 'After photo')}</div>`).join('')
+        || '<p class="muted small">Take the before photos now. After the clean, come back to this inspection and add an after photo next to each one.</p>';
+    };
+    render();
+    const off = outbox.onChange(() => document.body.contains($thumbs) ? render() : off());
 
-    const addFiles = async (files) => {
+    const addFiles = async (files, phase = ba ? 'before' : null, pairId = null) => {
       for (const file of files) {
         try {
           const blob = await shrink(file);
           const pid = crypto.randomUUID(), pos = lastPos;
-          const q = new URLSearchParams({ item_key: it.item_key, taken_at: new Date().toISOString(), ...(pos ? { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy } : {}) });
-          await outbox.put({ id: pid, inspectionId: id, itemKey: it.item_key, kind: 'photo', method: 'PUT',
+          const q = new URLSearchParams({
+            item_key: it.item_key, taken_at: new Date().toISOString(),
+            ...(phase ? { phase } : {}), ...(pairId ? { pair_id: pairId } : {}),
+            ...(pos ? { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy } : {}),
+          });
+          await outbox.put({ id: pid, inspectionId: id, itemKey: it.item_key, kind: 'photo', phase, pairId, method: 'PUT',
             url: `/api/inspections/${id}/photos/${pid}?${q}`, body: blob, contentType: blob.type });
         } catch (e) { toast(e.message, true); }
       }
-      renderThumbs();
+      render();
     };
-    for (const input of view.querySelectorAll('input[type=file]')) input.onchange = () => { addFiles([...input.files]); input.value = ''; };
+    view.addEventListener('change', (e) => {
+      const input = e.target;
+      if (input.type !== 'file' || !input.files.length) return;
+      if (input.dataset.pair) addFiles([input.files[0]], 'after', input.dataset.pair);
+      else if ('add' in input.dataset) addFiles([...input.files]);
+      input.value = '';
+    });
 
-    $thumbs.onclick = async (e) => {
-      const b = e.target.closest('button'); if (!b) return;
-      if (!(await confirmDialog('Delete this photo?'))) return;
-      if (b.dataset.delLocal) {
-        uploading.delete(b.dataset.delLocal);
-        await outbox.remove(b.dataset.delLocal);
-      } else {
-        const pid = b.dataset.del;
-        insp.photos = insp.photos.filter((p) => p.id !== pid);
-        await outbox.put({ id: `delete:${pid}`, inspectionId: id, kind: 'delete', photoId: pid, method: 'DELETE', url: `/api/inspections/${id}/photos/${pid}` });
+    $thumbs.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-del]'); if (!b) return;
+      const pid = b.dataset.del, all = await photosNow();
+      const linked = all.filter((p) => p.phase === 'after' && p.pair_id === pid); // goes with its before photo
+      if (!(await confirmDialog(linked.length ? 'Delete this before photo and its after photo?' : 'Delete this photo?'))) return;
+      for (const p of [{ id: pid, local: !!b.dataset.local }, ...linked]) {
+        if (p.local) { uploading.delete(p.id); await outbox.remove(p.id); continue; }
+        insp.photos = insp.photos.filter((x) => x.id !== p.id);
+        // the server deletes a before photo's pair itself, so only queue the one delete
+        if (p.id === pid) await outbox.put({ id: `delete:${pid}`, inspectionId: id, kind: 'delete', photoId: pid, method: 'DELETE', url: `/api/inspections/${id}/photos/${pid}` });
       }
-      renderThumbs();
-    };
+      render();
+    });
 
     let noteTimer;
     const saveNote = () => {
@@ -355,12 +404,16 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     const counts = insp.items.map((it) => insp.photos.filter((p) => p.item_key === it.item_key).length
       + pending.filter((p) => p.itemKey === it.item_key).length);
     const empty = insp.items.filter((it, i) => !counts[i] && !it.note.trim());
+    const allPhotos = [...insp.photos, ...pending.map((e) => ({ id: e.id, phase: e.phase, pair_id: e.pairId }))];
+    const noAfter = insp.mode === 'before_after'
+      ? allPhotos.filter((b) => b.phase === 'before' && !allPhotos.some((a) => a.phase === 'after' && a.pair_id === b.id)).length : 0;
     const view = page(`
       <p><a href="#/inspect/${id}/${insp.items.length}">← Back to items</a></p>
       <h1>Review &amp; sign</h1>
       <ul class="list">${insp.items.map((it, i) => `<li><a class="list-link" href="#/inspect/${id}/${i + 1}">
         <span class="grow">${i + 1}. ${esc(it.label)}</span>
         <span class="muted small">${counts[i]} photo${counts[i] === 1 ? '' : 's'}${it.note.trim() ? ' · note' : ''}</span></a></li>`).join('')}</ul>
+      ${noAfter ? `<p class="warn-text small">${noAfter} before photo${noAfter === 1 ? ' has' : 's have'} no after photo yet.</p>` : ''}
       ${empty.length ? `<p class="warn-text small">${empty.length} item${empty.length === 1 ? ' has' : 's have'} no photo or note: ${empty.map((i) => esc(i.label)).join(', ')}.</p>` : ''}
       <section class="card stack">
         <div class="row between"><strong>Your signature</strong><button class="btn" id="clear">Clear</button></div>
