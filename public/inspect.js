@@ -45,7 +45,7 @@ export async function flush() {
       if (!res.ok) { // the server refused it for good (e.g. inspection already approved): drop it, but say so
         const msg = (await res.json().catch(() => ({}))).error || res.statusText;
         console.warn('[outbox] dropped', e.kind, msg);
-        outboxError = `Couldn't save a ${e.kind}: ${msg}`;
+        outboxError = `Couldn't save a ${{ additem: 'new item', delitem: 'removed item' }[e.kind] || e.kind}: ${msg}`;
       }
       await outbox.remove(e.id);
     }
@@ -137,7 +137,7 @@ const scorePill = (it) => it.score ? `<span class="score-pill${it.score < LOW_SC
 const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
 const fmt = (d) => new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog }) {
+export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog, formDialog }) {
   let current = null; // the inspection being walked: server data + local pending changes
 
   // syncing badge in the header
@@ -242,11 +242,25 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     if (current?.id === id) return current;
     const [insp, pending] = await Promise.all([api(`/inspections/${id}`), outbox.all()]);
     for (const e of pending.filter((p) => p.inspectionId === id)) {
+      if (e.kind === 'additem' && !insp.items.some((i) => i.item_key === e.itemKey)) insp.items.push({ item_key: e.itemKey, label: JSON.parse(e.body).label, hint: '', note: '', added: true });
+      if (e.kind === 'delitem') insp.items = insp.items.filter((i) => i.item_key !== e.itemKey);
       if (e.kind === 'note') Object.assign(insp.items.find((i) => i.item_key === e.itemKey), JSON.parse(e.body));
       if (e.kind === 'delete') insp.photos = insp.photos.filter((p) => p.id !== e.photoId);
     }
     insp.submitting = pending.some((e) => e.inspectionId === id && e.kind === 'submit');
     return (current = insp);
+  }
+  // something found on site that isn't on the checklist: add it to this inspection only
+  async function addItem(insp) {
+    const v = await formDialog({ title: 'Add an item', submitLabel: 'Add',
+      fields: [{ name: 'label', label: 'What did you find? e.g. Fire exit door, stained carpet by lift', required: true }] });
+    const label = v?.label?.trim().slice(0, 200);
+    if (!label) return;
+    const key = [...crypto.getRandomValues(new Uint8Array(5))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    insp.items.push({ item_key: key, label, hint: '', note: '', added: true });
+    await outbox.put({ id: `additem:${insp.id}:${key}`, inspectionId: insp.id, itemKey: key, kind: 'additem', method: 'POST',
+      url: `/api/inspections/${insp.id}/items`, body: JSON.stringify({ key, label }), contentType: 'application/json' });
+    location.hash = `#/inspect/${insp.id}/${insp.items.length}`;
   }
   const editable = (insp) => ['draft', 'returned'].includes(insp.status) && !insp.submitting;
   const pendingPhotos = async (id, key) => (await outbox.all()).filter((e) => e.kind === 'photo' && e.inspectionId === id && e.itemKey === key);
@@ -274,7 +288,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
           ? `<div class="pairs small-pairs">${photos.filter((p) => p.phase !== 'after').map((b) =>
               `<div class="pair">${img(b)}${img(photos.find((a) => a.pair_id === b.id))}</div>`).join('')}</div>` : '';
         return `<li class="card">
-          <div class="row between"><strong>${n + 1}. ${esc(it.label)} ${scorePill(it)}</strong>
+          <div class="row between"><strong>${n + 1}. ${esc(it.label)} ${it.added ? '<span class="pill">Added on site</span>' : ''} ${scorePill(it)}</strong>
             ${can ? `<a class="btn" href="#/inspect/${id}/${n + 1}">Edit</a>` : ''}</div>
           ${pairs ? pairs + (local.length ? `<p class="muted small">${local.length} photo${local.length === 1 ? '' : 's'} uploading</p>` : '')
             : photos.length + local.length ? `<div class="thumbs">${photos.map((p) => `<img src="/api/photos/${p.id}" alt="" loading="lazy">`).join('')}
@@ -282,9 +296,11 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
           ${it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
         </li>`;
       }).join('')}</ol>
+      ${can ? '<button class="btn add-item" id="add-item" type="button">+ Add an item not on the checklist</button>' : ''}
       ${can ? `<div class="row between sticky-bar">
           ${insp.status === 'draft' ? '<button class="btn danger" id="discard">Discard</button>' : '<span></span>'}
           <a class="btn primary" href="#/inspect/${id}/finish">Review &amp; sign</a></div>` : ''}`);
+    view.querySelector('#add-item')?.addEventListener('click', () => addItem(insp));
     view.querySelector('#discard')?.addEventListener('click', async () => {
       if (!(await confirmDialog('Discard this inspection and all its photos?', 'Discard'))) return;
       try {
@@ -306,6 +322,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
       <div class="walk-top"><a href="#/inspect/${id}">← ${esc(insp.site_name)}</a><span class="muted small">Item ${n} of ${insp.items.length}</span></div>
       <div class="progress" aria-hidden="true"><span style="width:${(n / insp.items.length) * 100}%"></span></div>
       <h1>${esc(it.label)}</h1>
+      ${it.added ? '<p class="small"><span class="pill">Added on site</span> <button class="link-btn danger" id="remove-item" type="button">Remove this item</button></p>' : ''}
       ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
       ${ba ? '<div class="pair-head" aria-hidden="true"><span>Before</span><span>After</span></div>' : ''}
       <div class="${ba ? 'pairs' : 'thumbs big'}" id="thumbs"></div>
@@ -326,6 +343,7 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
         <label>Deadline<input type="date" data-f="action_due" value="${esc(it.action_due)}" min="${new Date().toISOString().slice(0, 10)}"></label>
       </section>`}
       <p class="error small" id="missing" role="alert" hidden></p>
+      <button class="btn add-item" id="add-item" type="button">+ Add an item not on the checklist</button>
       ${gpsDenied ? '<p class="small warn-text">Location is off — the report will show no GPS. Allow location for this site in your browser settings.</p>' : ''}
       <div class="row between sticky-bar">
         ${n > 1 ? `<a class="btn" href="#/inspect/${id}/${n - 1}">← Previous</a>` : '<span></span>'}
@@ -426,6 +444,21 @@ export function inspectViews({ api, post, del, esc, toast, shell, confirmDialog 
     }));
     view.addEventListener('focusout', saveItem);
     addEventListener('hashchange', saveItem, { once: true });
+    view.querySelector('#add-item').addEventListener('click', () => { saveItem(); addItem(insp); });
+    view.querySelector('#remove-item')?.addEventListener('click', async () => {
+      if (!(await confirmDialog(`Remove "${it.label}" and its photos from this inspection?`, 'Remove'))) return;
+      clearTimeout(saveTimer); dirty = false;
+      const pending = (await outbox.all()).filter((e) => e.inspectionId === id && e.itemKey === it.item_key);
+      for (const e of pending) { uploading.delete(e.id); await outbox.remove(e.id); }
+      // never reached the server? then dropping the queued add is enough
+      if (!pending.some((e) => e.kind === 'additem')) {
+        await outbox.put({ id: `delitem:${id}:${it.item_key}`, inspectionId: id, itemKey: it.item_key, kind: 'delitem', method: 'DELETE',
+          url: `/api/inspections/${id}/items/${encodeURIComponent(it.item_key)}` });
+      }
+      insp.items = insp.items.filter((x) => x !== it);
+      insp.photos = insp.photos.filter((p) => p.item_key !== it.item_key);
+      location.hash = `#/inspect/${id}`;
+    });
     // can't move on until the item is scored (and planned if low)
     view.querySelector('#next').addEventListener('click', (e) => {
       const problem = itemProblem(it, insp.mode);

@@ -13,6 +13,8 @@
   background: var(--bg);
 }
 * { box-sizing: border-box; }
+/* layout classes (.stack, .row…) set display, which would otherwise beat the hidden attribute */
+[hidden] { display: none !important; }
 body { margin: 0; min-height: 100dvh; background: var(--bg); }
 #app { max-width: 960px; margin: 0 auto; padding: 0 16px 32px; }
 h1, h2 { margin: 0 0 4px; }
@@ -72,7 +74,6 @@ a { color: var(--blue); }
 .btn:disabled { opacity: .4; cursor: default; }
 
 label { display: grid; gap: 4px; font-weight: 600; font-size: 14px; }
-label[hidden] { display: none; }
 select, textarea { font: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; width: 100%; background: #fff; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
@@ -113,7 +114,6 @@ td.actions { white-space: nowrap; text-align: right; }
 .warn-text { color: #93370d; }
 .sync { font-size: 13px; background: #fef0c7; color: #93370d; border-radius: 999px; padding: 4px 10px; }
 .sync.bad { background: #fee4e2; color: var(--error); }
-.sync[hidden] { display: none; }
 input[type=search] { margin-top: 12px; }
 
 .walk-top { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
@@ -201,3 +201,8 @@ dialog textarea { min-height: 140px; }
 .plan.overdue { background: #fee4e2; }
 .plan.done { border-left-color: #12b76a; background: #ecfdf3; }
 .plan .btn { margin-top: 6px; }
+
+/* items added on site */
+.add-item { display: block; width: 100%; margin-top: 16px; border-style: dashed; color: var(--blue); }
+.link-btn { background: none; border: none; padding: 4px; font: inherit; text-decoration: underline; cursor: pointer; color: var(--blue); min-height: 32px; }
+.link-btn.danger { color: var(--error); }

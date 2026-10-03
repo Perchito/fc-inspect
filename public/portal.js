@@ -46,7 +46,7 @@ export function portalViews({ api, post, esc, toast, shell, me }) {
       </section>
       ${insp.items.map((it, n) => `
         <section class="card">
-          <div class="row between"><h2>${n + 1}. ${esc(it.label)}</h2>${scorePill(it.score)}</div>
+          <div class="row between"><h2>${n + 1}. ${esc(it.label)}${it.added ? ' <span class="pill">Added on site</span>' : ''}</h2>${scorePill(it.score)}</div>
           ${actionPlan(it, esc)}
           ${it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
           ${itemPhotos(insp, it)}

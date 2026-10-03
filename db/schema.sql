@@ -136,3 +136,6 @@ alter table inspection_items add column if not exists action_who text;
 alter table inspection_items add column if not exists action_due date;
 alter table inspection_items add column if not exists action_done_at timestamptz;
 alter table inspection_items add column if not exists action_done_by uuid references users(id);
+
+-- items the inspector added on site (not from the template)
+alter table inspection_items add column if not exists added boolean not null default false;

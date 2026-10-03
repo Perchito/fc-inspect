@@ -348,7 +348,7 @@ async function viewUsers() {
 // ── router ──────────────────────────────────────────────
 // inspect.js imported with this file's ?v= so Cloudflare's 4h cache never serves a stale copy
 const { inspectViews, flush } = await import(`./inspect.js${new URL(import.meta.url).search}`);
-const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog });
+const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog, formDialog });
 const { reviewViews } = await import(`./review.js${new URL(import.meta.url).search}`);
 const review = reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog });
 const { portalViews } = await import(`./portal.js${new URL(import.meta.url).search}`);
