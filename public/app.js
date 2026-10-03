@@ -136,7 +136,7 @@ function shell(content) {
 const clientFields = (c = {}) => [
   { name: 'name', label: 'Business name', value: c.name, required: true },
   { name: 'contact_name', label: 'Contact name', value: c.contact_name },
-  { name: 'email', label: 'Email (reports are emailed here)', type: 'email', value: c.email },
+  { name: 'email', label: 'Email', type: 'email', value: c.email },
   { name: 'phone', label: 'Phone', type: 'tel', value: c.phone },
 ];
 

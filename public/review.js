@@ -1,4 +1,4 @@
-// Admin review screens: inspections inbox and the full report with approve / send back / PDF / email.
+// Admin review screens: inspections inbox and the full report with approve / send back / PDF.
 const STATUS = {
   draft: ['In progress', 'pill'], returned: ['Sent back', 'pill warn'],
   submitted: ['To review', 'pill'], approved: ['Approved', 'pill ok'],
@@ -65,7 +65,7 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
   }
 
   async function detail(id) {
-    const [insp, mail] = await Promise.all([api(`/inspections/${id}`), api('/admin/email-status')]);
+    const insp = await api(`/inspections/${id}`);
     const editing = insp.status === 'submitted';
     const ba = insp.mode === 'before_after';
     const maps = (g) => g ? `<a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" rel="noopener">${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}</a> <span class="muted">±${g.accuracy ?? '?'} m</span>` : '<span class="muted">not recorded</span>';
@@ -82,7 +82,6 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
           <dt>Inspection</dt><dd>${ba ? 'Before &amp; after' : 'Quality check'} · ${esc(insp.template_name)}</dd>
           <dt>Supervisor</dt><dd>${esc(insp.inspector_name)}</dd>
           ${avgOf(insp) ? `<dt>Overall score</dt><dd>${scorePill(+avgOf(insp))}</dd>` : ''}
-          ${ba ? '<dt>Visibility</dt><dd>Internal — not emailed to the client</dd>' : ''}
           <dt>Started</dt><dd>${fmt(insp.started_at)} · ${maps(insp.start_gps)}</dd>
           <dt>Finished</dt><dd>${fmt(insp.finished_at)} · ${maps(insp.end_gps)}</dd>
           ${insp.approved_at ? `<dt>Approved</dt><dd>${fmt(insp.approved_at)} by ${esc(insp.approved_by_name)}</dd>` : ''}
@@ -110,13 +109,12 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
         <div class="row">
           ${editing ? '<button class="btn" id="return">Send back</button><button class="btn primary" id="approve">Approve</button>' : ''}
           ${insp.status === 'approved' ? `${insp.client_signed_at ? '' : '<button class="btn" id="unapprove">Unapprove</button>'}
-            <a class="btn" data-pdf data-download href="/api/inspections/${id}/pdf?download=1">Download PDF</a>
-            ${ba ? '' : `<button class="btn primary" id="email">`}${ba ? '' : `${insp.emailed_at ? 'Email again' : 'Email to client'}</button>`}` : ''}
+            <a class="btn" data-pdf data-download href="/api/inspections/${id}/pdf?download=1">Download PDF</a>` : ''}
         </div>
       </div>`);
 
     const reload = () => detail(id);
-    // "Include notes" switch drives every PDF link (and the email default); remembered on this device
+    // "Include notes" switch drives every PDF link; remembered on this device
     const $notes = view.querySelector('#with-notes');
     const pdfLinks = () => view.querySelectorAll('[data-pdf]').forEach((a) => {
       const q = new URLSearchParams({ ...('download' in a.dataset ? { download: 1 } : {}), ...($notes.checked ? {} : { notes: 0 }) });
@@ -136,7 +134,7 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
       try { await del(`/admin/inspections/${id}/photos/${p.id}`); reload(); } catch (e) { toast(e.message, true); }
     });
     view.querySelector('#approve')?.addEventListener('click', async () => {
-      if (!(await confirmDialog('Approve this inspection? It can then be downloaded or emailed to the client as a PDF.', 'Approve'))) return;
+      if (!(await confirmDialog('Approve this inspection? Its PDF can then be downloaded to send to the client.', 'Approve'))) return;
       try { await post(`/admin/inspections/${id}/approve`); toast('Approved'); reload(); } catch (e) { toast(e.message, true); }
     });
     view.querySelector('#return')?.addEventListener('click', async () => {
@@ -150,23 +148,6 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
     view.querySelector('#unapprove')?.addEventListener('click', async () => {
       if (!(await confirmDialog('Move this back to "To review"? The client stops seeing it until you approve again.', 'Unapprove'))) return;
       try { await post(`/admin/inspections/${id}/unapprove`); reload(); } catch (e) { toast(e.message, true); }
-    });
-    view.querySelector('#email')?.addEventListener('click', async () => {
-      if (!mail.configured) return toast('Email is not set up on the server yet', true);
-      const greeting = insp.client_contact ? insp.client_contact.split(' ')[0] : 'there';
-      const sent = await formDialog({
-        title: 'Email report to client', submitLabel: 'Send',
-        fields: [
-          { name: 'to', label: 'To (separate several with commas)', type: 'text', value: insp.client_email || '', required: true },
-          { name: 'include_notes', label: 'PDF', type: 'select', value: $notes.checked ? 'yes' : 'no',
-            options: [{ value: 'yes', label: 'With notes' }, { value: 'no', label: 'Without notes (scores and photos only)' }] },
-          { name: 'subject', label: 'Subject', value: `Inspection report — ${insp.site_name} — ${day(insp.started_at)}`, required: true },
-          { name: 'message', label: 'Message', type: 'textarea', value:
-            `Hi ${greeting},\n\nPlease find attached the inspection report for ${insp.site_name}, carried out on ${day(insp.started_at)}.\n\nKind regards,\nFC Cleaning Company` },
-        ],
-        onSubmit: (v) => post(`/admin/inspections/${id}/email`, { ...v, include_notes: v.include_notes === 'yes' }),
-      });
-      if (sent) { toast(`Sent to ${sent.emailed_to}`); reload(); }
     });
   }
 
