@@ -64,25 +64,37 @@ function shell({ title = '', subtitle = '', back = '', tab, focus = false, body 
 
 // ── login ───────────────────────────────────────────────
 function showLogin(error = '') {
+  let lastEmail = '';
+  try { lastEmail = localStorage.getItem('fci-email') || ''; } catch {}
   $app.innerHTML = `
     <div class="login-screen">
       <form class="login" id="login">
         <img src="/img/icon-192.png" alt="" class="login-logo">
         <h1>FC Inspect</h1>
         <p class="muted">Cleaning quality inspections<br>FC Cleaning Company</p>
-        ${error ? `<p class="form-error" role="alert">${esc(error)}</p>` : ''}
-        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" inputmode="email" required></label>
+        <p class="form-error" role="alert" ${error ? '' : 'hidden'}>${esc(error)}</p>
+        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" inputmode="email" value="${esc(lastEmail)}" required></label>
         <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
         <button class="btn primary block lg">Log in</button>
       </form>
     </div>`;
-  const form = document.getElementById('login');
-  if (!matchMedia('(pointer: coarse)').matches) form.email.focus();
+  const form = document.getElementById('login'), $err = form.querySelector('.form-error'), btn = form.querySelector('button');
+  if (!matchMedia('(pointer: coarse)').matches) (lastEmail ? form.password : form.email).focus();
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = 'Logging in…';
-    try { await post('/login', { email: form.email.value, password: form.password.value }); start(); }
-    catch (err) { showLogin(err.offline ? "You're offline — connect to log in." : err.message); }
+    btn.disabled = true; btn.textContent = 'Logging in…'; $err.hidden = true;
+    try {
+      await post('/login', { email: form.email.value, password: form.password.value });
+      try { localStorage.setItem('fci-email', form.email.value.trim()); } catch {}
+      start();
+    } catch (err) {
+      // keep the email; just clear the password so they can try again
+      $err.textContent = err.offline ? "You're offline — connect to log in." : err.message;
+      $err.hidden = false;
+      form.password.value = '';
+      form.password.focus();
+      btn.disabled = false; btn.textContent = 'Log in';
+    }
   };
 }
 async function logout() {
