@@ -345,18 +345,15 @@ async function viewUsers() {
   });
 }
 
-// ── non-admin placeholder (inspector/cleaner/client screens come in later steps) ──
-function viewHome() {
-  shell(`<section class="card"><h2>Welcome, ${esc(me.name.split(' ')[0])}</h2>
-    <p class="muted">You're logged in as ${ROLE_LABEL[me.role].toLowerCase()}. Your screens are on the way.</p></section>`);
-}
-
 // ── router ──────────────────────────────────────────────
 // inspect.js imported with this file's ?v= so Cloudflare's 4h cache never serves a stale copy
 const { inspectViews, flush } = await import(`./inspect.js${new URL(import.meta.url).search}`);
 const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog });
 const { reviewViews } = await import(`./review.js${new URL(import.meta.url).search}`);
 const review = reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog });
+const { portalViews } = await import(`./portal.js${new URL(import.meta.url).search}`);
+const portal = portalViews({ api, post, esc, toast, shell, me: () => me });
+const PORTAL_ROUTES = [[/^#\/reports$/, portal.list], [/^#\/reports\/([\w-]{36})$/, portal.report]];
 const INSPECT_ROUTES = [
   [/^#\/inspect$/, insp.home], [/^#\/inspect\/new$/, insp.start],
   [/^#\/inspect\/([\w-]{36})$/, insp.overview], [/^#\/inspect\/([\w-]{36})\/finish$/, insp.finish],
@@ -375,10 +372,9 @@ let lastHash = location.hash;
 async function route() {
   if (leaveGuard && !leaveGuard()) { history.replaceState(null, '', lastHash); return; }
   leaveGuard = null; lastHash = location.hash;
-  const routes = { admin: ROUTES, inspector: INSPECT_ROUTES }[me.role];
-  if (!routes) return viewHome();
+  const routes = { admin: ROUTES, inspector: INSPECT_ROUTES, client: PORTAL_ROUTES, cleaner: PORTAL_ROUTES }[me.role];
   const hit = routes.find(([re]) => re.test(location.hash));
-  if (!hit) { location.replace(me.role === 'admin' ? '#/inspections' : '#/inspect'); return; }
+  if (!hit) { location.replace({ admin: '#/inspections', inspector: '#/inspect' }[me.role] || '#/reports'); return; }
   try { await hit[1](...location.hash.match(hit[0]).slice(1)); }
   catch (err) { err.status === 401 ? showLogin('Your session ended — log in again.') : shell(`<p class="error">${esc(err.message)}</p>`); }
 }

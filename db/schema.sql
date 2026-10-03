@@ -121,3 +121,10 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 alter table photos add column if not exists phase text check (phase in ('before', 'after'));
 alter table photos add column if not exists pair_id uuid references photos(id) on delete set null;
+
+-- who a comment is for: 'internal' = admin <-> inspector (send-back reasons),
+-- 'client' = admin <-> client (portal replies). Cleaners see neither.
+alter table comments add column if not exists audience text not null default 'internal';
+do $$ begin
+  alter table comments add constraint comments_audience_check check (audience in ('internal', 'client'));
+exception when duplicate_object then null; end $$;

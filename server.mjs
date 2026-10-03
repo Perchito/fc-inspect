@@ -9,6 +9,7 @@ import { adminRoutes } from './lib/admin.mjs';
 import { inspectionRoutes, loadInspection } from './lib/inspections.mjs';
 import { reviewRoutes, pdfFor } from './lib/review.mjs';
 import { pdfFilename } from './lib/pdf.mjs';
+import { portalRoutes } from './lib/portal.mjs';
 
 const { DATABASE_URL, PORT = 4620 } = process.env;
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -80,7 +81,7 @@ app.get('/api/inspections/:id/pdf', requireUser(), async (req, res) => {
     'content-disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${pdfFilename(insp)}"`,
   }).send(pdf);
 });
-app.use('/api', inspectionRoutes(pool, requireUser));
+app.use('/api', inspectionRoutes(pool, requireUser), portalRoutes(pool, requireUser));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

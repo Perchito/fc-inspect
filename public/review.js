@@ -7,6 +7,26 @@ const FILTERS = [['submitted', 'To review'], ['returned', 'Sent back'], ['approv
 const fmt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const day = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
+// photos of one item: a grid, or before/after pairs. Shared with the client/cleaner portal.
+export function itemPhotos(insp, it, editing = false) {
+  const photo = (p, alt) => p
+    ? `<figure><a href="/api/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/photos/${p.id}" alt="${alt}" loading="lazy"></a>
+        ${editing ? `<button class="thumb-del" data-del="${p.id}" aria-label="Delete ${alt.toLowerCase()}">✕</button>` : ''}</figure>`
+    : '<div class="after-slot muted">—</div>';
+  const ps = insp.photos.filter((p) => p.item_key === it.item_key);
+  if (!ps.length) return '<p class="muted small">No photos</p>';
+  if (insp.mode !== 'before_after') return `<div class="thumbs big">${ps.map((p) => photo(p, 'Photo')).join('')}</div>`;
+  const befores = ps.filter((p) => p.phase !== 'after');
+  const orphans = ps.filter((p) => p.phase === 'after' && !befores.some((b) => b.id === p.pair_id));
+  return `<div class="pair-head"><span>Before</span><span>After</span></div><div class="pairs">${befores.map((b) =>
+    `<div class="pair">${photo(b, 'Before photo')}${photo(ps.find((a) => a.phase === 'after' && a.pair_id === b.id), 'After photo')}</div>`).join('')}
+    ${orphans.map((a) => `<div class="pair">${photo(null)}${photo(a, 'After photo')}</div>`).join('')}</div>`;
+}
+
+// a comment thread as HTML
+export const thread = (comments, esc) => comments.map((c) =>
+  `<p class="comment"><strong>${esc(c.name)}</strong> <span class="muted small">${fmt(c.created_at)}</span><br>${esc(c.body)}</p>`).join('');
+
 export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog }) {
   async function list(status = 'submitted') {
     const rows = await api(`/admin/inspections${status ? `?status=${status}` : ''}`);
@@ -29,21 +49,10 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
     const editing = insp.status === 'submitted';
     const ba = insp.mode === 'before_after';
     const maps = (g) => g ? `<a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" rel="noopener">${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}</a> <span class="muted">±${g.accuracy ?? '?'} m</span>` : '<span class="muted">not recorded</span>';
-    const photo = (p, alt) => p
-      ? `<figure><a href="/api/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/photos/${p.id}" alt="${alt}" loading="lazy"></a>
-          ${editing ? `<button class="thumb-del" data-del="${p.id}" aria-label="Delete ${alt.toLowerCase()}">✕</button>` : ''}</figure>`
-      : '<div class="after-slot muted">—</div>';
-    const photosOf = (it) => {
-      const ps = insp.photos.filter((p) => p.item_key === it.item_key);
-      if (!ps.length) return '<p class="muted small">No photos</p>';
-      if (!ba) return `<div class="thumbs big">${ps.map((p) => photo(p, 'Photo')).join('')}</div>`;
-      const befores = ps.filter((p) => p.phase !== 'after');
-      const orphans = ps.filter((p) => p.phase === 'after' && !befores.some((b) => b.id === p.pair_id));
-      return `<div class="pair-head"><span>Before</span><span>After</span></div><div class="pairs">${befores.map((b) =>
-        `<div class="pair">${photo(b, 'Before photo')}${photo(ps.find((a) => a.phase === 'after' && a.pair_id === b.id), 'After photo')}</div>`).join('')}
-        ${orphans.map((a) => `<div class="pair">${photo(null)}${photo(a, 'After photo')}</div>`).join('')}</div>`;
-    };
+    const photosOf = (it) => itemPhotos(insp, it, editing);
     const [label, cls] = STATUS[insp.status];
+    const internal = insp.comments.filter((c) => c.audience !== 'client');
+    const clientMsgs = insp.comments.filter((c) => c.audience === 'client');
 
     const view = shell(`
       <p><a href="#/inspections">← Inspections</a></p>
@@ -60,8 +69,11 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
           ${insp.client_signed_at ? `<dt>Client sign-off</dt><dd>${fmt(insp.client_signed_at)} by ${esc(insp.client_signed_by_name)}</dd>` : ''}
         </dl>
       </section>
-      ${insp.comments.length ? `<section class="card"><h2>Comments</h2>${insp.comments.map((c) =>
-        `<p class="comment"><strong>${esc(c.name)}</strong> <span class="muted small">${fmt(c.created_at)}</span><br>${esc(c.body)}</p>`).join('')}</section>` : ''}
+      ${internal.length ? `<section class="card"><h2>Notes to the inspector</h2>${thread(internal, esc)}</section>` : ''}
+      ${insp.status === 'approved' ? `<section class="card"><h2>Messages with the client</h2>
+        ${clientMsgs.length ? thread(clientMsgs, esc) : '<p class="muted small">No messages yet. The client can reply from their portal.</p>'}
+        <form id="reply" class="stack reply"><label class="small">Reply to the client<textarea name="body" rows="3" required></textarea></label>
+          <div class="row end"><button class="btn">Send reply</button></div></form></section>` : ''}
       ${editing ? '<p class="muted small">You can tidy up notes and delete photos before approving. The client only sees the report once it\'s approved.</p>' : ''}
       ${insp.items.map((it, n) => `
         <section class="card">
@@ -83,6 +95,11 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
       </div>`);
 
     const reload = () => detail(id);
+    view.querySelector('#reply')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await post(`/inspections/${id}/comments`, { body: e.target.body.value }); toast('Reply posted — the client sees it in their portal'); reload(); }
+      catch (err) { toast(err.message, true); }
+    });
     view.querySelectorAll('[data-note]').forEach((ta) => ta.addEventListener('change', async () => {
       try { await put(`/admin/inspections/${id}/items/${encodeURIComponent(ta.dataset.note)}`, { note: ta.value }); toast('Note saved'); }
       catch (e) { toast(e.message, true); }

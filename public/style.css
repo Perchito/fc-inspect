@@ -179,3 +179,4 @@ html, body { overflow-x: clip; }
 .pairs a, .thumbs a { display: block; }
 dialog textarea { min-height: 140px; }
 @media (max-width: 560px) { .review-bar { position: static; border-top: none; } }
+.reply { margin-top: 12px; }

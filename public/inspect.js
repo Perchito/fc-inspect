@@ -96,7 +96,7 @@ async function shrink(file) {
 }
 
 // ── signature pad ───────────────────────────────────────
-function signaturePad(canvas) {
+export function signaturePad(canvas) {
   const ratio = devicePixelRatio || 1, ctx = canvas.getContext('2d');
   const size = () => {
     const { width, height } = canvas.getBoundingClientRect();
