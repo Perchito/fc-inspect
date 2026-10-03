@@ -16,7 +16,7 @@ revoke all on database p_fc_inspect from public;
 SQL
 # register with the panel (storage api reads this per request): nightly + offsite backups pick up the db, storage holds photos
 sudo -u perchito node -e '
-const f="/etc/fc-outreach/projects.json", fs=require("fs"), d=JSON.parse(fs.readFileSync(f));
+const f="/etc/perchito/projects.json", fs=require("fs"), d=JSON.parse(fs.readFileSync(f));
 d.projects["fc-inspect"]={name:"FC Inspect",createdAt:new Date().toISOString(),key:process.argv[2],publicRead:false,storage:true,db:{name:"p_fc_inspect",user:"p_fc_inspect",password:process.argv[1]}};
 fs.writeFileSync(f,JSON.stringify(d,null,2))' "$DBPASS" "$STORAGE_KEY"
 
@@ -40,8 +40,8 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 UNIT
-# let perchito restart it on deploy without a password (like mc-crm)
-echo 'perchito ALL=(root) NOPASSWD: /usr/bin/systemctl restart fc-inspect, /usr/bin/systemctl restart fc-inspect.service' > /etc/sudoers.d/fc-inspect
+# let perchito (deploys + the perchito control panel) manage this service without a password
+for a in start stop restart enable disable; do echo "perchito ALL=(root) NOPASSWD: /usr/bin/systemctl $a fc-inspect, /usr/bin/systemctl $a fc-inspect.service"; done > /etc/sudoers.d/fc-inspect
 chmod 440 /etc/sudoers.d/fc-inspect && visudo -cf /etc/sudoers.d/fc-inspect
 systemctl daemon-reload
 systemctl enable --now fc-inspect.service
