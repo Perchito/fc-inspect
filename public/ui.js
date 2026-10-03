@@ -234,3 +234,30 @@ export const row = ({ href, ic, title, sub = '', right = '', danger = false, id 
     ${ic ? `<span class="row-ic">${icon(ic)}</span>` : ''}
     <span class="row-main"><strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
     ${right}${href ? icon('chevron', 'row-chev') : ''}</${href ? 'a' : 'button'}>`;
+
+// ── save a PDF to the device ────────────────────────────
+// iPhone home-screen apps can't download files from a link (it only opens a viewer), so on phones the PDF is
+// fetched here and handed to the share sheet ("Save to Files", AirDrop, WhatsApp…). Elsewhere: normal download.
+export async function savePdf(url, fallbackName = 'FC-Inspection.pdf') {
+  toast('Preparing PDF…');
+  let res;
+  try { res = await fetch(url, { credentials: 'same-origin' }); } catch { return toast("Couldn't get the PDF — check your connection.", { error: true }); }
+  if (!res.ok) return toast("Couldn't get the PDF. Please try again.", { error: true });
+  const blob = await res.blob();
+  const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')?.[1] || fallbackName;
+  const file = new File([blob], name, { type: 'application/pdf' });
+  if (navigator.canShare?.({ files: [file] }) && matchMedia('(pointer: coarse)').matches) {
+    const share = () => navigator.share({ files: [file], title: name });
+    try { await share(); return; } catch (e) { if (e.name === 'AbortError') return; }
+    // the tap "expired" while a big PDF downloaded: one more tap opens the share sheet
+    await sheet({
+      title: 'PDF ready', submitLabel: 'Save PDF',
+      text: `${name} · ${(blob.size / 1048576).toFixed(1)} MB. Tap Save PDF, then choose “Save to Files”.`,
+      onSubmit: async () => { try { await share(); } catch (e) { if (e.name !== 'AbortError') throw new Error("Couldn't open the share sheet on this phone."); } },
+    });
+    return;
+  }
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}

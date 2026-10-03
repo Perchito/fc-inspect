@@ -2,7 +2,7 @@
 // actions done); supervisors see the same report read-only once it has been submitted.
 import {
   esc, icon, post, put, del, toast, sheet, confirmSheet, viewer, statusBadge, scoreBadge, modeLabel, fmtDateTime,
-  relDay, dueText, LOW_SCORE,
+  relDay, dueText, LOW_SCORE, savePdf,
 } from './ui.js?v=__V__';
 
 const withNotes = () => { try { return localStorage.getItem('fci-pdf-notes') !== '0'; } catch { return true; } };
@@ -107,6 +107,7 @@ export function reportViews({ shell, me }) {
     });
     $notes.addEventListener('change', () => { try { localStorage.setItem('fci-pdf-notes', $notes.checked ? '1' : '0'); } catch {} pdfLinks(); });
     pdfLinks();
+    view.querySelector('[data-download]').addEventListener('click', (e) => { e.preventDefault(); savePdf(e.currentTarget.href); });
 
     view.querySelectorAll('[data-photos]').forEach((box) => box.addEventListener('click', (e) => {
       const b = e.target.closest('[data-view]'); if (!b) return;
