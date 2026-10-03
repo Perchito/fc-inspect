@@ -109,7 +109,7 @@ function showLogin(error = '') {
 }
 
 // ── shell ───────────────────────────────────────────────
-const ADMIN_NAV = [['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users']];
+const ADMIN_NAV = [['#/clients', 'Clients & sites'], ['#/templates', 'Templates'], ['#/users', 'Users'], ['#/inspect', 'Inspect']];
 
 function shell(content) {
   const nav = me.role === 'admin'
@@ -121,6 +121,7 @@ function shell(content) {
       <strong>FC Inspect</strong>
       <span class="spacer"></span>
       <span class="who">${esc(me.name)} · ${ROLE_LABEL[me.role]}</span>
+      <span id="sync" class="sync" role="status" hidden></span>
       <button class="btn ghost" id="logout">Log out</button>
     </header>
     ${nav}
@@ -351,8 +352,16 @@ function viewHome() {
 }
 
 // ── router ──────────────────────────────────────────────
+// inspect.js imported with this file's ?v= so Cloudflare's 4h cache never serves a stale copy
+const { inspectViews, flush } = await import(`./inspect.js${new URL(import.meta.url).search}`);
+const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog });
+const INSPECT_ROUTES = [
+  [/^#\/inspect$/, insp.home], [/^#\/inspect\/new$/, insp.start],
+  [/^#\/inspect\/([\w-]{36})$/, insp.overview], [/^#\/inspect\/([\w-]{36})\/finish$/, insp.finish],
+  [/^#\/inspect\/([\w-]{36})\/(\d+)$/, insp.item],
+];
 let leaveGuard = null;
-const ROUTES = [
+const ROUTES = [...INSPECT_ROUTES,
   [/^#\/clients\/([\w-]+)$/, viewClient], [/^#\/clients$/, viewClients],
   [/^#\/templates\/([\w-]+)$/, viewTemplate], [/^#\/templates$/, viewTemplates],
   [/^#\/users$/, viewUsers],
@@ -361,16 +370,18 @@ let lastHash = location.hash;
 async function route() {
   if (leaveGuard && !leaveGuard()) { history.replaceState(null, '', lastHash); return; }
   leaveGuard = null; lastHash = location.hash;
-  if (me.role !== 'admin') return viewHome();
-  const hit = ROUTES.find(([re]) => re.test(location.hash));
-  if (!hit) { location.replace('#/clients'); return; }
+  const routes = { admin: ROUTES, inspector: INSPECT_ROUTES }[me.role];
+  if (!routes) return viewHome();
+  const hit = routes.find(([re]) => re.test(location.hash));
+  if (!hit) { location.replace(me.role === 'admin' ? '#/clients' : '#/inspect'); return; }
   try { await hit[1](...location.hash.match(hit[0]).slice(1)); }
   catch (err) { err.status === 401 ? showLogin('Your session ended — log in again.') : shell(`<p class="error">${esc(err.message)}</p>`); }
 }
 addEventListener('hashchange', () => me && route());
 
 async function start() {
-  try { me = await api('/me'); route(); }
+  try { me = await api('/me'); route(); flush(); }
   catch (err) { err.status === 401 ? showLogin() : ($app.innerHTML = `<p class="error center">${esc(err.message)}</p>`); }
 }
 start();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('sw', e));

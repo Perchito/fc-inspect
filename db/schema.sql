@@ -91,6 +91,7 @@ create table if not exists inspection_items (
   note          text not null default '',
   primary key (inspection_id, item_key)
 );
+alter table inspection_items add column if not exists hint text not null default '';
 
 create table if not exists photos (
   id            uuid primary key default gen_random_uuid(),
