@@ -44,6 +44,8 @@ export const thread = (comments, esc) => comments.map((c) =>
 
 const avgOf = (insp) => { const s = insp.items.map((i) => i.score).filter(Boolean); return s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
 
+const withNotes = () => { try { return localStorage.getItem('fci-pdf-notes') !== '0'; } catch { return true; } };
+
 export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog }) {
   async function list(status = 'submitted') {
     const rows = await api(`/admin/inspections${status ? `?status=${status}` : ''}`);
@@ -70,7 +72,6 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
     const photosOf = (it) => itemPhotos(insp, it, editing);
     const [label, cls] = STATUS[insp.status];
     const internal = insp.comments.filter((c) => c.audience !== 'client');
-    const clientMsgs = insp.comments.filter((c) => c.audience === 'client');
 
     const view = shell(`
       <p><a href="#/inspections">← Inspections</a></p>
@@ -79,9 +80,9 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
         <p class="muted">${esc(insp.client_name)}${insp.site_address ? ` · ${esc(insp.site_address)}` : ''}</p>
         <dl class="facts">
           <dt>Inspection</dt><dd>${ba ? 'Before &amp; after' : 'Quality check'} · ${esc(insp.template_name)}</dd>
-          <dt>Inspector</dt><dd>${esc(insp.inspector_name)}</dd>
+          <dt>Supervisor</dt><dd>${esc(insp.inspector_name)}</dd>
           ${avgOf(insp) ? `<dt>Overall score</dt><dd>${scorePill(+avgOf(insp))}</dd>` : ''}
-          ${ba ? '<dt>Visibility</dt><dd>Internal — cleaners for this site can see it once approved; never shown to the client</dd>' : ''}
+          ${ba ? '<dt>Visibility</dt><dd>Internal — not emailed to the client</dd>' : ''}
           <dt>Started</dt><dd>${fmt(insp.started_at)} · ${maps(insp.start_gps)}</dd>
           <dt>Finished</dt><dd>${fmt(insp.finished_at)} · ${maps(insp.end_gps)}</dd>
           ${insp.approved_at ? `<dt>Approved</dt><dd>${fmt(insp.approved_at)} by ${esc(insp.approved_by_name)}</dd>` : ''}
@@ -89,11 +90,7 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
           ${insp.client_signed_at ? `<dt>Client sign-off</dt><dd>${fmt(insp.client_signed_at)} by ${esc(insp.client_signed_by_name)}</dd>` : ''}
         </dl>
       </section>
-      ${internal.length ? `<section class="card"><h2>Notes to the inspector</h2>${thread(internal, esc)}</section>` : ''}
-      ${insp.status === 'approved' ? `<section class="card"><h2>Messages with the client</h2>
-        ${clientMsgs.length ? thread(clientMsgs, esc) : '<p class="muted small">No messages yet. The client can reply from their portal.</p>'}
-        <form id="reply" class="stack reply"><label class="small">Reply to the client<textarea name="body" rows="3" required></textarea></label>
-          <div class="row end"><button class="btn">Send reply</button></div></form></section>` : ''}
+      ${internal.length ? `<section class="card"><h2>Notes to the supervisor</h2>${thread(internal, esc)}</section>` : ''}
       ${editing ? '<p class="muted small">You can tidy up notes and delete photos before approving. The client only sees the report once it\'s approved.</p>' : ''}
       ${insp.items.map((it, n) => `
         <section class="card">
@@ -103,25 +100,31 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
           ${photosOf(it)}
         </section>`).join('')}
-      ${insp.inspector_sig ? `<section class="card"><h2>Inspector signature</h2><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}"></section>` : ''}
+      ${insp.inspector_sig ? `<section class="card"><h2>Supervisor signature</h2><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}"></section>` : ''}
       ${insp.client_sig ? `<section class="card"><h2>Client sign-off</h2><img class="sig-img" src="${esc(insp.client_sig)}" alt="Client signature"></section>` : ''}
       <div class="row between sticky-bar review-bar">
-        <a class="btn" href="/api/inspections/${id}/pdf" target="_blank" rel="noopener">${insp.status === 'approved' ? 'View PDF' : 'Preview PDF'}</a>
+        <div class="row">
+          <a class="btn" data-pdf href="/api/inspections/${id}/pdf" target="_blank" rel="noopener">${insp.status === 'approved' ? 'View PDF' : 'Preview PDF'}</a>
+          <label class="check notes-toggle"><input type="checkbox" id="with-notes" ${withNotes() ? 'checked' : ''}> Include notes</label>
+        </div>
         <div class="row">
           ${editing ? '<button class="btn" id="return">Send back</button><button class="btn primary" id="approve">Approve</button>' : ''}
           ${insp.status === 'approved' ? `${insp.client_signed_at ? '' : '<button class="btn" id="unapprove">Unapprove</button>'}
-            <a class="btn" href="/api/inspections/${id}/pdf?download=1">Download PDF</a>
+            <a class="btn" data-pdf data-download href="/api/inspections/${id}/pdf?download=1">Download PDF</a>
             ${ba ? '' : `<button class="btn primary" id="email">`}${ba ? '' : `${insp.emailed_at ? 'Email again' : 'Email to client'}</button>`}` : ''}
         </div>
       </div>`);
 
     const reload = () => detail(id);
-    bindDone(view, reload);
-    view.querySelector('#reply')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try { await post(`/inspections/${id}/comments`, { body: e.target.body.value }); toast('Reply posted — the client sees it in their portal'); reload(); }
-      catch (err) { toast(err.message, true); }
+    // "Include notes" switch drives every PDF link (and the email default); remembered on this device
+    const $notes = view.querySelector('#with-notes');
+    const pdfLinks = () => view.querySelectorAll('[data-pdf]').forEach((a) => {
+      const q = new URLSearchParams({ ...('download' in a.dataset ? { download: 1 } : {}), ...($notes.checked ? {} : { notes: 0 }) });
+      a.href = `/api/inspections/${id}/pdf${q.size ? `?${q}` : ''}`;
     });
+    $notes.addEventListener('change', () => { try { localStorage.setItem('fci-pdf-notes', $notes.checked ? '1' : '0'); } catch {} pdfLinks(); });
+    pdfLinks();
+    bindDone(view, reload);
     view.querySelectorAll('[data-note]').forEach((ta) => ta.addEventListener('change', async () => {
       try { await put(`/admin/inspections/${id}/items/${encodeURIComponent(ta.dataset.note)}`, { note: ta.value }); toast('Note saved'); }
       catch (e) { toast(e.message, true); }
@@ -133,12 +136,12 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
       try { await del(`/admin/inspections/${id}/photos/${p.id}`); reload(); } catch (e) { toast(e.message, true); }
     });
     view.querySelector('#approve')?.addEventListener('click', async () => {
-      if (!(await confirmDialog('Approve this inspection? The client will be able to see it in their portal.', 'Approve'))) return;
+      if (!(await confirmDialog('Approve this inspection? It can then be downloaded or emailed to the client as a PDF.', 'Approve'))) return;
       try { await post(`/admin/inspections/${id}/approve`); toast('Approved'); reload(); } catch (e) { toast(e.message, true); }
     });
     view.querySelector('#return')?.addEventListener('click', async () => {
       const ok = await formDialog({
-        title: 'Send back to the inspector', submitLabel: 'Send back',
+        title: 'Send back to the supervisor', submitLabel: 'Send back',
         fields: [{ name: 'comment', label: 'What needs changing?', type: 'textarea', required: true }],
         onSubmit: (v) => post(`/admin/inspections/${id}/return`, v),
       });
@@ -155,11 +158,13 @@ export function reviewViews({ api, post, put, del, esc, toast, shell, formDialog
         title: 'Email report to client', submitLabel: 'Send',
         fields: [
           { name: 'to', label: 'To (separate several with commas)', type: 'text', value: insp.client_email || '', required: true },
+          { name: 'include_notes', label: 'PDF', type: 'select', value: $notes.checked ? 'yes' : 'no',
+            options: [{ value: 'yes', label: 'With notes' }, { value: 'no', label: 'Without notes (scores and photos only)' }] },
           { name: 'subject', label: 'Subject', value: `Inspection report — ${insp.site_name} — ${day(insp.started_at)}`, required: true },
           { name: 'message', label: 'Message', type: 'textarea', value:
             `Hi ${greeting},\n\nPlease find attached the inspection report for ${insp.site_name}, carried out on ${day(insp.started_at)}.\n\nKind regards,\nFC Cleaning Company` },
         ],
-        onSubmit: (v) => post(`/admin/inspections/${id}/email`, v),
+        onSubmit: (v) => post(`/admin/inspections/${id}/email`, { ...v, include_notes: v.include_notes === 'yes' }),
       });
       if (sent) { toast(`Sent to ${sent.emailed_to}`); reload(); }
     });

@@ -13,7 +13,9 @@ const post = (path, body = {}) => api(path, { method: 'POST', body });
 const put = (path, body) => api(path, { method: 'PUT', body });
 const del = (path) => api(path, { method: 'DELETE' });
 
-const ROLE_LABEL = { admin: 'Admin', inspector: 'Inspector', cleaner: 'Cleaner', client: 'Client' };
+const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor', cleaner: 'Cleaner', client: 'Client' };
+// for now only admins and supervisors log in (no client/cleaner portal); reports go to clients as emailed PDFs
+const ACTIVE_ROLES = ['admin', 'inspector'];
 let me = null;
 
 // ── small UI helpers ────────────────────────────────────
@@ -134,7 +136,7 @@ function shell(content) {
 const clientFields = (c = {}) => [
   { name: 'name', label: 'Business name', value: c.name, required: true },
   { name: 'contact_name', label: 'Contact name', value: c.contact_name },
-  { name: 'email', label: 'Email', type: 'email', value: c.email },
+  { name: 'email', label: 'Email (reports are emailed here)', type: 'email', value: c.email },
   { name: 'phone', label: 'Phone', type: 'tel', value: c.phone },
 ];
 
@@ -156,14 +158,11 @@ async function viewClients() {
 }
 
 async function viewClient(id) {
-  const [clients, sites, templates, users] = await Promise.all([
-    api('/admin/clients'), api(`/admin/sites?client_id=${id}`), api('/admin/templates'), api('/admin/users')]);
+  const [clients, sites, templates] = await Promise.all([
+    api('/admin/clients'), api(`/admin/sites?client_id=${id}`), api('/admin/templates')]);
   const client = clients.find((c) => c.id === id);
   if (!client) { location.hash = '#/clients'; return; }
   const tName = Object.fromEntries(templates.map((t) => [t.id, t.name]));
-  const cleaners = users.filter((u) => u.role === 'cleaner' && u.active);
-  const uName = Object.fromEntries(users.map((u) => [u.id, u.name]));
-  const logins = users.filter((u) => u.client_id === id);
 
   const view = shell(`
     <p><a href="#/clients">← All clients</a></p>
@@ -177,28 +176,21 @@ async function viewClient(id) {
       <section class="card site">
         <div class="row between"><div><strong>${esc(s.name)}</strong><div class="muted">${esc(s.address || '')}</div></div>
           <div class="row"><button class="btn" data-edit-site="${s.id}">Edit</button><button class="btn danger" data-del-site="${s.id}">Delete</button></div></div>
-        <p class="small"><span class="label">Templates</span> ${s.template_ids.map((t) => `<span class="pill">${esc(tName[t])}</span>`).join('') || '<span class="muted">none — inspectors can\'t inspect this site yet</span>'}</p>
-        <p class="small"><span class="label">Cleaners</span> ${s.cleaner_ids.map((u) => `<span class="pill">${esc(uName[u])}</span>`).join('') || '<span class="muted">none</span>'}</p>
-      </section>`).join('') : '<p class="empty">No sites yet.</p>'}
-    <div class="row between"><h2>Client logins</h2><button class="btn" id="add-login">Add client login</button></div>
-    ${logins.length ? `<ul class="list">${logins.map((u) => `<li class="list-row"><strong>${esc(u.name)}</strong><span class="muted">${esc(u.email)}</span>
-      ${u.active ? '' : '<span class="pill">inactive</span>'}</li>`).join('')}</ul>`
-      : '<p class="empty">Nobody from this client can log in yet. Manage logins on the Users tab.</p>'}`);
+        <p class="small"><span class="label">Templates</span> ${s.template_ids.map((t) => `<span class="pill">${esc(tName[t])}</span>`).join('') || '<span class="muted">none — only a no-checklist before &amp; after is possible here</span>'}</p>
+      </section>`).join('') : '<p class="empty">No sites yet.</p>'}`);
 
   const siteFields = (s = {}) => [
     { name: 'name', label: 'Site name', value: s.name, required: true },
     { name: 'address', label: 'Address', type: 'textarea', value: s.address },
     { name: 'template_ids', label: 'Templates used at this site', type: 'checks', value: s.template_ids,
       options: templates.map((t) => ({ value: t.id, label: t.name })), empty: 'No templates yet — create one on the Templates tab.' },
-    { name: 'cleaner_ids', label: 'Cleaners assigned', type: 'checks', value: s.cleaner_ids,
-      options: cleaners.map((u) => ({ value: u.id, label: u.name })), empty: 'No cleaner accounts yet — add them on the Users tab.' },
   ];
   const reload = () => viewClient(id);
   view.querySelector('#edit').onclick = async () => {
     if (await formDialog({ title: 'Edit client', fields: clientFields(client), onSubmit: (v) => put(`/admin/clients/${id}`, v) })) reload();
   };
   view.querySelector('#delete').onclick = async () => {
-    if (!(await confirmDialog(`Delete ${client.name}, its sites and client logins?`))) return;
+    if (!(await confirmDialog(`Delete ${client.name} and its sites?`))) return;
     try { await del(`/admin/clients/${id}`); location.hash = '#/clients'; } catch (e) { toast(e.message, true); }
   };
   view.querySelector('#add-site').onclick = async () => {
@@ -213,15 +205,6 @@ async function viewClient(id) {
     if (!(await confirmDialog(`Delete site ${s.name}?`))) return;
     try { await del(`/admin/sites/${s.id}`); reload(); } catch (e) { toast(e.message, true); }
   });
-  view.querySelector('#add-login').onclick = async () => {
-    const u = await formDialog({
-      title: `Add login for ${client.name}`,
-      fields: [{ name: 'name', label: 'Name', value: client.contact_name, required: true },
-        { name: 'email', label: 'Email', type: 'email', value: client.email, required: true }],
-      onSubmit: (v) => post('/admin/users', { ...v, role: 'client', client_id: id }),
-    });
-    if (u) { await showPassword(u); reload(); }
-  };
 }
 
 // ── admin: templates ────────────────────────────────────
@@ -229,7 +212,7 @@ async function viewTemplates() {
   const templates = await api('/admin/templates');
   const view = shell(`
     <div class="row between"><h1>Templates</h1><button class="btn primary" id="add">New template</button></div>
-    <p class="muted">A template is the checklist an inspector walks through: one photo-and-notes step per item.</p>
+    <p class="muted">A template is the checklist a supervisor walks through: one photo-and-notes step per item.</p>
     ${templates.length ? `<ul class="list">${templates.map((t) => `
       <li><a href="#/templates/${t.id}" class="list-link"><strong>${esc(t.name)}</strong>
         <span class="muted">${t.items.length} item${t.items.length === 1 ? '' : 's'}</span>
@@ -263,7 +246,7 @@ async function viewTemplate(id) {
       <li class="item">
         <div class="stack grow">
           <input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="e.g. Kitchen surfaces" aria-label="Item ${i + 1} name">
-          <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the inspector (optional)" aria-label="Item ${i + 1} hint" class="small">
+          <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the supervisor (optional)" aria-label="Item ${i + 1} hint" class="small">
         </div>
         <div class="item-tools">
           <button class="btn icon" data-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
@@ -300,7 +283,7 @@ async function viewTemplate(id) {
 
 // ── admin: users ────────────────────────────────────────
 async function viewUsers() {
-  const [users, clients] = await Promise.all([api('/admin/users'), api('/admin/clients')]);
+  const users = await api('/admin/users');
   const view = shell(`
     <div class="row between"><h1>Users</h1><button class="btn primary" id="add">Add user</button></div>
     <div class="table-wrap"><table>
@@ -314,25 +297,22 @@ async function viewUsers() {
             <button class="btn" data-reset="${u.id}">Reset password</button></td>
         </tr>`).join('')}</tbody>
     </table></div>`);
-  const roleOptions = Object.entries(ROLE_LABEL).map(([value, label]) => ({ value, label }));
-  const clientOptions = [{ value: '', label: '— pick client —' }, ...clients.map((c) => ({ value: c.id, label: c.name }))];
+  const roleOptions = (role) => [...new Set([...ACTIVE_ROLES, role].filter(Boolean))].map((value) => ({ value, label: ROLE_LABEL[value] }));
   const userFields = (u = {}) => [
     { name: 'name', label: 'Name', value: u.name, required: true },
     { name: 'email', label: 'Email', type: 'email', value: u.email, required: true },
-    { name: 'role', label: 'Role', type: 'select', value: u.role || 'inspector', options: roleOptions },
-    { name: 'client_id', label: 'Client', type: 'select', value: u.client_id || '', options: clientOptions },
+    { name: 'role', label: 'Role', type: 'select', value: u.role || 'inspector', options: roleOptions(u.role) },
     ...(u.id ? [{ name: 'active', label: 'Status', type: 'select', value: u.active ? 'yes' : 'no',
       options: [{ value: 'yes', label: 'Active — can log in' }, { value: 'no', label: 'Inactive — blocked' }] }] : []),
   ];
-  const showClientPick = (v, form) => { form.querySelector('[data-field=client_id]').hidden = v.role !== 'client'; };
   view.querySelector('#add').onclick = async () => {
-    const u = await formDialog({ title: 'Add user', fields: userFields(), submitLabel: 'Create', onChange: showClientPick,
+    const u = await formDialog({ title: 'Add user', fields: userFields(), submitLabel: 'Create',
       onSubmit: (v) => post('/admin/users', v) });
     if (u) { await showPassword(u); viewUsers(); }
   };
   view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = async () => {
     const u = users.find((x) => x.id === b.dataset.edit);
-    if (await formDialog({ title: `Edit ${u.name}`, fields: userFields(u), onChange: showClientPick,
+    if (await formDialog({ title: `Edit ${u.name}`, fields: userFields(u),
       onSubmit: (v) => put(`/admin/users/${u.id}`, { ...v, active: v.active === 'yes' }) })) viewUsers();
   });
   view.querySelectorAll('[data-reset]').forEach((b) => b.onclick = async () => {
@@ -351,9 +331,6 @@ const { inspectViews, flush } = await import(`./inspect.js${new URL(import.meta.
 const insp = inspectViews({ api, post, del, esc, toast, shell, confirmDialog, formDialog });
 const { reviewViews } = await import(`./review.js${new URL(import.meta.url).search}`);
 const review = reviewViews({ api, post, put, del, esc, toast, shell, formDialog, confirmDialog });
-const { portalViews } = await import(`./portal.js${new URL(import.meta.url).search}`);
-const portal = portalViews({ api, post, esc, toast, shell, me: () => me });
-const PORTAL_ROUTES = [[/^#\/reports$/, portal.list], [/^#\/reports\/([\w-]{36})$/, portal.report]];
 const INSPECT_ROUTES = [
   [/^#\/inspect$/, insp.home], [/^#\/inspect\/new$/, insp.start],
   [/^#\/inspect\/([\w-]{36})$/, insp.overview], [/^#\/inspect\/([\w-]{36})\/finish$/, insp.finish],
@@ -373,9 +350,10 @@ let lastHash = location.hash;
 async function route() {
   if (leaveGuard && !leaveGuard()) { history.replaceState(null, '', lastHash); return; }
   leaveGuard = null; lastHash = location.hash;
-  const routes = { admin: ROUTES, inspector: INSPECT_ROUTES, client: PORTAL_ROUTES, cleaner: PORTAL_ROUTES }[me.role];
+  const routes = { admin: ROUTES, inspector: INSPECT_ROUTES }[me.role];
+  if (!routes) return shell('<p class="empty">This account has no access. Please contact the FC Cleaning office.</p>');
   const hit = routes.find(([re]) => re.test(location.hash));
-  if (!hit) { location.replace({ admin: '#/inspections', inspector: '#/inspect' }[me.role] || '#/reports'); return; }
+  if (!hit) { location.replace(me.role === 'admin' ? '#/inspections' : '#/inspect'); return; }
   try { await hit[1](...location.hash.match(hit[0]).slice(1)); }
   catch (err) { err.status === 401 ? showLogin('Your session ended — log in again.') : shell(`<p class="error">${esc(err.message)}</p>`); }
 }

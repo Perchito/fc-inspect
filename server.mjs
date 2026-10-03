@@ -30,7 +30,7 @@ app.use(async (req, res, next) => {
     const { rows } = await pool.query(
       `select u.id, u.email, u.name, u.role, u.client_id from sessions s
          join users u on u.id = s.user_id
-        where s.token_hash = $1 and s.expires_at > now() and u.active`,
+        where s.token_hash = $1 and s.expires_at > now() and u.active and u.role in ('admin', 'inspector')`,
       [tokenHash(token)]);
     req.user = rows[0];
     next();
@@ -47,7 +47,8 @@ app.post('/api/login', async (req, res) => {
   const ip = clientIp(req);
   if (loginBlocked(ip)) return res.status(429).json({ error: 'Too many attempts — try again in 15 minutes.' });
   const { email = '', password = '' } = req.body || {};
-  const { rows } = await pool.query('select id, pass_hash from users where lower(email) = lower($1) and active', [String(email).trim()]);
+  // for now only admins and supervisors (inspector role) log in; clients get reports as emailed PDFs
+  const { rows } = await pool.query(`select id, pass_hash from users where lower(email) = lower($1) and active and role in ('admin', 'inspector')`, [String(email).trim()]);
   if (!rows[0] || !verifyPassword(String(password), rows[0].pass_hash)) {
     loginFailed(ip);
     console.warn(`[auth] failed login for ${String(email).slice(0, 80)} from ${ip}`);
@@ -75,7 +76,7 @@ app.use('/api/admin', requireUser('admin'), adminRoutes(pool), reviewRoutes(pool
 app.get('/api/inspections/:id/pdf', requireUser(), async (req, res) => {
   const insp = await loadInspection(pool, req.user, req.params.id);
   if (!insp) return res.status(404).json({ error: 'Inspection not found' });
-  const pdf = await pdfFor(pool, insp);
+  const pdf = await pdfFor(pool, insp, { notes: req.query.notes !== '0' });
   res.set({
     'content-type': 'application/pdf', 'cache-control': 'private, no-store',
     'content-disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${pdfFilename(insp)}"`,
