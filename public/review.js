@@ -79,7 +79,7 @@ export function reportViews({ shell, me }) {
       ${editing ? '<p class="note-box">You can tidy up notes and delete photos before approving.</p>' : ''}
       ${insp.items.map((it, n) => `
         <section class="card report-item">
-          <div class="row-between"><h3><span class="muted">${n + 1}.</span> ${esc(it.label)}${it.added && insp.template_id ? ' <span class="badge neutral">Added on site</span>' : ''}</h3>${scoreBadge(it.score)}</div>
+          ${it.label?.trim() || it.score ? `<div class="row-between"><h3>${it.label?.trim() ? `<span class="muted">${n + 1}.</span> ${esc(it.label)}` : ''}${it.added && insp.template_id ? ' <span class="badge neutral">Added on site</span>' : ''}</h3>${scoreBadge(it.score)}</div>` : ''}
           ${actionPlanHtml(it, { canToggle: admin && insp.status !== 'draft', inspectionId: id })}
           ${editing ? `<label class="field"><span>Notes</span><textarea data-note="${esc(it.item_key)}" rows="2" placeholder="No notes">${esc(it.note)}</textarea></label>`
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}

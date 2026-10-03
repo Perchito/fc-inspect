@@ -41,7 +41,7 @@ function shell({ title = '', subtitle = '', back = '', tab, focus = false, body 
   $app.innerHTML = `
     <div class="app${focus ? ' focus' : ''}">
       <aside class="sidebar" aria-label="Main">
-        <div class="brand"><img src="/img/fc-logo-white-icon.png" alt=""><span>FC Inspect</span></div>
+        <div class="brand"><img src="/img/fc-logo-white.png" alt="FC Cleaning Company Ltd"><span>FC Inspect</span></div>
         <a class="btn primary block" href="#/start">${icon('plus')} Start inspection</a>
         <nav>${SIDE().map(([k, href, ic, label]) => `<a href="${href}" ${sideOn(k) ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
         <a class="side-user" href="#/more">${avatar(me.name, 'light')}<span><strong>${esc(me.name)}</strong><small>${ROLE_LABEL[me.role] || me.role}</small></span></a>
