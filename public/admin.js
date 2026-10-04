@@ -150,49 +150,75 @@ export function adminViews({ shell, me, setLeaveGuard }) {
       <button class="btn ghost-danger block" id="delete">${icon('trash')} Delete template</button>
       <div class="bottom-bar"><button class="btn primary block lg" id="save">Save template</button></div>`;
     const $items = view.querySelector('#items');
+    // an area's block = its heading row up to the next heading
+    const blockEnd = (i) => { let j = i + 1; while (j < items.length && !items[j].area) j++; return j; };
+    const prevArea = (i) => { for (let j = i - 1; j >= 0; j--) if (items[j].area) return j; return -1; };
+    const tools = (i, up, down, label) => `<div class="edit-tools">
+      <button class="icon-btn" data-move="${i}" data-dir="-1" ${up ? '' : 'disabled'} aria-label="Move ${label} up">${icon('up')}</button>
+      <button class="icon-btn" data-move="${i}" data-dir="1" ${down ? '' : 'disabled'} aria-label="Move ${label} down">${icon('down')}</button>
+      <button class="icon-btn danger" data-remove="${i}" aria-label="Remove ${label}">${icon('x')}</button></div>`;
+    const itemRow = (it, i, num) => `<li class="card edit-item">
+      <span class="item-num sm">${num}</span>
+      <div class="grow stack tight">
+        <input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="e.g. Kettle" aria-label="Item ${num} name">
+        <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the supervisor (optional)" aria-label="Item ${num} hint" class="hint-input">
+      </div>
+      ${tools(i, i > 0 && !items[i - 1].area, i < items.length - 1 && !items[i + 1].area, 'item')}</li>`;
     const render = () => {
-      let a = 0, s = 0, inArea = false;
-      const nums = items.map((it) => it.area ? (inArea = true, s = 0, String(++a)) : inArea ? `${a}.${++s}` : String(++a));
-      $items.innerHTML = items.map((it, i) => it.area ? `<li class="card edit-item edit-area">
-        <span class="item-num sm">${nums[i]}</span>
-        <div class="grow"><input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="Area, e.g. Kitchen" aria-label="Area ${nums[i]} name"></div>
-        <div class="edit-tools">
-          <button class="icon-btn" data-add-in="${i}" aria-label="Add item to this area">${icon('plus')}</button>
-          <button class="icon-btn" data-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">${icon('up')}</button>
-          <button class="icon-btn" data-move="${i}" data-dir="1" ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">${icon('down')}</button>
-          <button class="icon-btn danger" data-remove="${i}" aria-label="Remove area heading">${icon('x')}</button>
-        </div></li>` : `<li class="card edit-item${inArea && nums[i].includes('.') ? ' sub' : ''}">
-        <span class="item-num sm">${nums[i]}</span>
-        <div class="grow stack tight">
-          <input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="e.g. Kitchen floor" aria-label="Item ${nums[i]} name">
-          <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the supervisor (optional)" aria-label="Item ${nums[i]} hint" class="hint-input">
-        </div>
-        <div class="edit-tools">
-          <button class="icon-btn" data-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">${icon('up')}</button>
-          <button class="icon-btn" data-move="${i}" data-dir="1" ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">${icon('down')}</button>
-          <button class="icon-btn danger" data-remove="${i}" aria-label="Remove item">${icon('x')}</button>
-        </div></li>`).join('') || `<li>${emptyState({ icon: 'template', title: 'No items yet', text: 'Add an area (e.g. Kitchen), then the items in it (Kettle, Fridge…).' })}</li>`;
-    };
-    render();
-    $items.addEventListener('input', (e) => { const { i, k } = e.target.dataset; if (k) { items[i][k] = e.target.value; dirty = true; } });
-    $items.addEventListener('click', (e) => {
-      const b = e.target.closest('button'); if (!b) return;
-      if (b.dataset.remove) items.splice(+b.dataset.remove, 1);
-      if (b.dataset.addIn) {
-        let j = +b.dataset.addIn + 1; while (j < items.length && !items[j].area) j++;
-        items.splice(j, 0, { label: '', hint: '' }); dirty = true; render();
-        return $items.querySelector(`[data-i="${j}"][data-k=label]`).focus();
+      let html = '', a = 0, i = 0;
+      // items before the first area (older templates): plain 1, 2, 3
+      for (; i < items.length && !items[i].area; i++) html += itemRow(items[i], i, ++a);
+      while (i < items.length) {
+        const h = i, end = blockEnd(h), n = ++a;
+        html += `<li class="area-group"><div class="card edit-item edit-area">
+          <span class="item-num sm">${n}</span>
+          <div class="grow"><input data-i="${h}" data-k="label" value="${esc(items[h].label)}" placeholder="Area, e.g. Kitchen" aria-label="Area ${n} name"></div>
+          ${tools(h, prevArea(h) >= 0, end < items.length, 'area')}</div>
+          <ol class="stack plain area-items">`;
+        for (i = h + 1; i < end; i++) html += itemRow(items[i], i, `${n}.${i - h}`);
+        html += `</ol><button class="btn dashed block sm-btn" data-add-in="${h}">${icon('plus')} Add item to ${esc(items[h].label.trim() || `area ${n}`)}</button></li>`;
       }
-      if (b.dataset.move) { const i = +b.dataset.move, j = i + +b.dataset.dir; [items[i], items[j]] = [items[j], items[i]]; }
+      $items.innerHTML = html || `<li>${emptyState({ icon: 'template', title: 'No items yet', text: 'Add an area (e.g. Kitchen), then the items in it (Kettle, Fridge…).' })}</li>`;
+      // once there are areas every new item goes inside one
+      view.querySelector('#add-item').hidden = items.some((r) => r.area);
+    };
+    const focusRow = (i) => $items.querySelector(`[data-i="${i}"][data-k=label]`).focus();
+    render();
+    $items.addEventListener('input', (e) => {
+      const { i, k } = e.target.dataset; if (!k) return;
+      items[i][k] = e.target.value; dirty = true;
+      if (items[i].area) e.target.closest('.area-group').querySelector('[data-add-in]').lastChild.textContent = ` Add item to ${e.target.value.trim() || 'area'}`;
+    });
+    $items.addEventListener('click', async (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.addIn) { const j = blockEnd(+b.dataset.addIn); items.splice(j, 0, { label: '', hint: '' }); dirty = true; render(); return focusRow(j); }
+      if (b.dataset.remove) {
+        const i = +b.dataset.remove;
+        if (!items[i].area) items.splice(i, 1);
+        else {
+          const n = blockEnd(i) - i - 1;
+          if (n && !(await confirmSheet(`Remove ${items[i].label.trim() || 'this area'}?`, { text: `Its ${n} item${n === 1 ? '' : 's'} are removed too.`, okLabel: 'Remove' }))) return;
+          items.splice(i, n + 1);
+        }
+      }
+      if (b.dataset.move) {
+        const i = +b.dataset.move, d = +b.dataset.dir;
+        if (!items[i].area) [items[i], items[i + d]] = [items[i + d], items[i]];
+        else if (d < 0) { const p = prevArea(i); items.splice(p, 0, ...items.splice(i, blockEnd(i) - i)); }
+        else { const e2 = blockEnd(i); items.splice(i, 0, ...items.splice(e2, blockEnd(e2) - e2)); }
+      }
       dirty = true; render();
     });
     view.querySelector('#tname').oninput = () => { dirty = true; };
-    for (const area of [false, true]) view.querySelector(area ? '#add-area' : '#add-item').onclick = () => {
-      items.push(area ? { area, label: '' } : { label: '', hint: '' }); dirty = true; render();
-      $items.querySelector(`[data-i="${items.length - 1}"][data-k=label]`).focus();
+    view.querySelector('#add-area').onclick = () => {
+      items.push({ area: true, label: '' }, { label: '', hint: '' }); dirty = true; render(); focusRow(items.length - 2);
     };
+    view.querySelector('#add-item').onclick = () => { items.push({ label: '', hint: '' }); dirty = true; render(); focusRow(items.length - 1); };
     view.querySelector('#save').onclick = async () => {
       try {
+        const empty = items.findIndex((r, i) => r.area && !items.slice(i + 1, blockEnd(i)).some((x) => x.label.trim()));
+        if (empty >= 0) return toast(`${items[empty].label.trim() || 'An area'} has no items — add one or remove the area`, { error: true });
+        if (items.some((r) => r.area && !r.label.trim())) return toast('Every area needs a name', { error: true });
         let area = '';
         const list = items.flatMap((r) => r.area ? (area = r.label.trim(), []) : r.label.trim() ? [{ key: r.key, label: r.label, hint: r.hint, area }] : []);
         const saved = await put(`/admin/templates/${id}`, { name: view.querySelector('#tname').value, items: list });
