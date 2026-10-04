@@ -6,6 +6,14 @@ import {
   scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar, itemNums, areaHead,
 } from './ui.js?v=__V__';
 
+// items added on site go at the end of their area (no area / a new area: the end of the list) — same rule as the server
+function insertItem(items, it) {
+  const last = it.area ? items.findLastIndex((x) => x.area === it.area) : -1;
+  const at = last >= 0 ? last + 1 : items.length;
+  items.splice(at, 0, it);
+  return at;
+}
+
 // ── outbox ──────────────────────────────────────────────
 // entries: {id, seq, inspectionId, method, url, body (Blob|string), contentType, kind, itemKey?, phase?, pairId?, local?}
 const idb = new Promise((resolve, reject) => {
@@ -176,7 +184,10 @@ export async function loadInspection(id, { fresh = false } = {}) {
       inspector_id: l.inspector_id, items: l.items.map((it) => ({ ...it, note: '' })), photos: [], comments: [], local: true };
   }
   for (const e of pending) {
-    if (e.kind === 'additem' && !insp.items.some((i) => i.item_key === e.itemKey)) insp.items.push({ item_key: e.itemKey, label: JSON.parse(e.body).label, hint: '', note: '', added: true });
+    if (e.kind === 'additem' && !insp.items.some((i) => i.item_key === e.itemKey)) {
+      const { label, area = '' } = JSON.parse(e.body);
+      insertItem(insp.items, { item_key: e.itemKey, label, hint: '', note: '', added: true, area });
+    }
     if (e.kind === 'delitem') insp.items = insp.items.filter((i) => i.item_key !== e.itemKey);
     if (e.kind === 'note') Object.assign(insp.items.find((i) => i.item_key === e.itemKey) || {}, JSON.parse(e.body));
     if (e.kind === 'delete') insp.photos = insp.photos.filter((p) => p.id !== e.photoId);
@@ -214,19 +225,28 @@ export function inspectViews({ shell, me }) {
   const base = (id) => `#/inspections/${id}`;
 
   // add an item found on site (this inspection only, never the template)
-  async function addItem(insp, { first = false } = {}) {
+  // an item added on site goes in an area: an existing one (the current item's by default) or a new one
+  async function addItem(insp, { first = false, area = '' } = {}) {
+    const NEW = '\n', areas = [...new Set(insp.items.map((i) => i.area).filter(Boolean))];
     const v = await sheet({
       title: first ? 'Add the first item' : 'Add an item', submitLabel: 'Add item',
       text: isFree(insp) ? 'Name what you are photographing.' : 'Something you found that is not on the checklist.',
-      fields: [{ name: 'label', label: 'Item name', placeholder: 'e.g. Oven, fire exit door, stained carpet', required: true }],
+      fields: [
+        { name: 'area', label: 'Area', type: 'select', value: area || (areas.length ? areas.at(-1) : ''),
+          options: [...(areas.length ? areas.map((a) => ({ value: a, label: a })) : [{ value: '', label: 'No area' }]), { value: NEW, label: '+ New area…' }] },
+        { name: 'newarea', label: 'New area name', placeholder: 'e.g. Laundry room' },
+        { name: 'label', label: 'Item name', placeholder: 'e.g. Oven, fire exit door, stained carpet', required: true },
+      ],
+      onChange: (v, form) => { form.querySelector('[data-field=newarea]').hidden = v.area !== NEW; },
+      onSubmit: (v) => { if (v.area === NEW && !v.newarea.trim()) throw new Error('Give the new area a name'); return v; },
     });
     const label = v?.label?.trim().slice(0, 200);
     if (!label) return;
-    const key = randomKey();
-    insp.items.push({ item_key: key, label, hint: '', note: '', added: true });
+    const key = randomKey(), itemArea = (v.area === NEW ? v.newarea : v.area).trim().slice(0, 200);
+    const at = insertItem(insp.items, { item_key: key, label, hint: '', note: '', added: true, area: itemArea });
     await outbox.put({ id: `additem:${insp.id}:${key}`, inspectionId: insp.id, itemKey: key, kind: 'additem', method: 'POST',
-      url: `/api/inspections/${insp.id}/items`, body: JSON.stringify({ key, label }), contentType: 'application/json' });
-    location.hash = `${base(insp.id)}/item/${insp.items.length}`;
+      url: `/api/inspections/${insp.id}/items`, body: JSON.stringify({ key, label, area: itemArea }), contentType: 'application/json' });
+    location.hash = `${base(insp.id)}/item/${at + 1}`;
   }
 
   // ── start flow: site → inspection → confirm ──
@@ -511,7 +531,7 @@ export function inspectViews({ shell, me }) {
       }));
     }
 
-    view.querySelector('#add-item').onclick = () => { saveItem(); addItem(insp); };
+    view.querySelector('#add-item').onclick = () => { saveItem(); addItem(insp, { area: it.area }); };
     view.querySelector('#remove-item')?.addEventListener('click', async () => {
       if (!(await confirmSheet(`Remove "${it.label}"?`, { text: 'Its photos and notes are removed from this inspection.', okLabel: 'Remove' }))) return;
       clearTimeout(saveTimer); dirty = false;
