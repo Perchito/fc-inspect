@@ -139,3 +139,6 @@ alter table inspection_items add column if not exists action_done_by uuid refere
 
 -- items the inspector added on site (not from the template)
 alter table inspection_items add column if not exists added boolean not null default false;
+
+-- items can be grouped under an area (template item {area: 'Kitchen'}), numbered 1.1, 1.2…
+alter table inspection_items add column if not exists area text not null default '';

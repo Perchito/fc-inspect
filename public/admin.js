@@ -123,7 +123,7 @@ export function adminViews({ shell, me, setLeaveGuard }) {
     view.querySelectorAll('[data-dup]').forEach((b) => b.onclick = async () => {
       const t = list.find((x) => x.id === b.dataset.dup);
       const copy = await sheet({ title: 'Duplicate template', fields: [{ name: 'name', label: 'Name of the copy', value: `${t.name} (copy)`, required: true }],
-        submitLabel: 'Duplicate', onSubmit: (v) => post('/admin/templates', { name: v.name, items: t.items.map(({ label, hint }) => ({ label, hint })) }) });
+        submitLabel: 'Duplicate', onSubmit: (v) => post('/admin/templates', { name: v.name, items: t.items.map(({ label, hint, area }) => ({ label, hint, area })) }) });
       if (copy) { toast('Template duplicated'); location.hash = `#/templates/${copy.id}`; }
     });
   }
@@ -133,7 +133,10 @@ export function adminViews({ shell, me, setLeaveGuard }) {
     let t;
     try { t = (await api('/admin/templates')).find((x) => x.id === id); } catch (e) { return fail(view, e, () => template(id)); }
     if (!t) { location.replace('#/templates'); return; }
-    const items = t.items.map((i) => ({ ...i }));
+    // editor rows: area headings ({area: true, label}) followed by their items; saved as items carrying area
+    const toRows = (list) => list.flatMap((it, i) => [
+      ...(it.area && it.area !== list[i - 1]?.area ? [{ area: true, label: it.area }] : []), { key: it.key, label: it.label, hint: it.hint }]);
+    const items = toRows(t.items);
     let dirty = false;
     view.innerHTML = `
       <section class="card stack">
@@ -142,40 +145,58 @@ export function adminViews({ shell, me, setLeaveGuard }) {
       </section>
       <h3 class="section-h">Items</h3>
       <ol class="stack plain" id="items"></ol>
-      <button class="btn dashed block" id="add-item">${icon('plus')} Add item</button>
+      <div class="two-btn"><button class="btn dashed grow" id="add-area">${icon('plus')} Add area</button>
+        <button class="btn dashed grow" id="add-item">${icon('plus')} Add item</button></div>
       <button class="btn ghost-danger block" id="delete">${icon('trash')} Delete template</button>
       <div class="bottom-bar"><button class="btn primary block lg" id="save">Save template</button></div>`;
     const $items = view.querySelector('#items');
     const render = () => {
-      $items.innerHTML = items.map((it, i) => `<li class="card edit-item">
-        <span class="item-num sm">${i + 1}</span>
+      let a = 0, s = 0, inArea = false;
+      const nums = items.map((it) => it.area ? (inArea = true, s = 0, String(++a)) : inArea ? `${a}.${++s}` : String(++a));
+      $items.innerHTML = items.map((it, i) => it.area ? `<li class="card edit-item edit-area">
+        <span class="item-num sm">${nums[i]}</span>
+        <div class="grow"><input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="Area, e.g. Kitchen" aria-label="Area ${nums[i]} name"></div>
+        <div class="edit-tools">
+          <button class="icon-btn" data-add-in="${i}" aria-label="Add item to this area">${icon('plus')}</button>
+          <button class="icon-btn" data-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">${icon('up')}</button>
+          <button class="icon-btn" data-move="${i}" data-dir="1" ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">${icon('down')}</button>
+          <button class="icon-btn danger" data-remove="${i}" aria-label="Remove area heading">${icon('x')}</button>
+        </div></li>` : `<li class="card edit-item${inArea && nums[i].includes('.') ? ' sub' : ''}">
+        <span class="item-num sm">${nums[i]}</span>
         <div class="grow stack tight">
-          <input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="e.g. Kitchen floor" aria-label="Item ${i + 1} name">
-          <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the supervisor (optional)" aria-label="Item ${i + 1} hint" class="hint-input">
+          <input data-i="${i}" data-k="label" value="${esc(it.label)}" placeholder="e.g. Kitchen floor" aria-label="Item ${nums[i]} name">
+          <input data-i="${i}" data-k="hint" value="${esc(it.hint)}" placeholder="Hint for the supervisor (optional)" aria-label="Item ${nums[i]} hint" class="hint-input">
         </div>
         <div class="edit-tools">
           <button class="icon-btn" data-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">${icon('up')}</button>
           <button class="icon-btn" data-move="${i}" data-dir="1" ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">${icon('down')}</button>
           <button class="icon-btn danger" data-remove="${i}" aria-label="Remove item">${icon('x')}</button>
-        </div></li>`).join('') || `<li>${emptyState({ icon: 'template', title: 'No items yet', text: 'Add the areas to check, e.g. Reception, Kitchen, Toilets.' })}</li>`;
+        </div></li>`).join('') || `<li>${emptyState({ icon: 'template', title: 'No items yet', text: 'Add an area (e.g. Kitchen), then the items in it (Kettle, Fridge…).' })}</li>`;
     };
     render();
     $items.addEventListener('input', (e) => { const { i, k } = e.target.dataset; if (k) { items[i][k] = e.target.value; dirty = true; } });
     $items.addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.remove) items.splice(+b.dataset.remove, 1);
+      if (b.dataset.addIn) {
+        let j = +b.dataset.addIn + 1; while (j < items.length && !items[j].area) j++;
+        items.splice(j, 0, { label: '', hint: '' }); dirty = true; render();
+        return $items.querySelector(`[data-i="${j}"][data-k=label]`).focus();
+      }
       if (b.dataset.move) { const i = +b.dataset.move, j = i + +b.dataset.dir; [items[i], items[j]] = [items[j], items[i]]; }
       dirty = true; render();
     });
     view.querySelector('#tname').oninput = () => { dirty = true; };
-    view.querySelector('#add-item').onclick = () => {
-      items.push({ label: '', hint: '' }); dirty = true; render();
+    for (const area of [false, true]) view.querySelector(area ? '#add-area' : '#add-item').onclick = () => {
+      items.push(area ? { area, label: '' } : { label: '', hint: '' }); dirty = true; render();
       $items.querySelector(`[data-i="${items.length - 1}"][data-k=label]`).focus();
     };
     view.querySelector('#save').onclick = async () => {
       try {
-        const saved = await put(`/admin/templates/${id}`, { name: view.querySelector('#tname').value, items: items.filter((i) => i.label.trim()) });
-        items.splice(0, items.length, ...saved.items); dirty = false; render(); toast('Template saved');
+        let area = '';
+        const list = items.flatMap((r) => r.area ? (area = r.label.trim(), []) : r.label.trim() ? [{ key: r.key, label: r.label, hint: r.hint, area }] : []);
+        const saved = await put(`/admin/templates/${id}`, { name: view.querySelector('#tname').value, items: list });
+        items.splice(0, items.length, ...toRows(saved.items)); dirty = false; render(); toast('Template saved');
       } catch (e) { toast(e.message, { error: true }); }
     };
     view.querySelector('#delete').onclick = async () => {

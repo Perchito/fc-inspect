@@ -2,7 +2,7 @@
 // actions done); supervisors see the same report read-only once it has been submitted.
 import {
   esc, icon, post, put, del, toast, sheet, confirmSheet, viewer, statusBadge, scoreBadge, modeLabel, fmtDateTime,
-  relDay, dueText, LOW_SCORE, savePdf,
+  relDay, dueText, LOW_SCORE, savePdf, itemNums, areaHead,
 } from './ui.js?v=__V__';
 
 const withNotes = () => { try { return localStorage.getItem('fci-pdf-notes') !== '0'; } catch { return true; } };
@@ -59,6 +59,7 @@ export function reportViews({ shell, me }) {
     const internal = insp.comments.filter((c) => c.audience !== 'client');
     const score = avg(insp.items), low = insp.items.filter((it) => it.score && it.score < LOW_SCORE).length;
     const maps = (g) => g ? `<a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" rel="noopener">${icon('pin', 'inline')} Map</a> <span class="muted small">±${g.accuracy ?? '?'} m</span>` : '<span class="muted">not recorded</span>';
+    const nums = itemNums(insp.items);
     const view = shell({ title: insp.template_id ? insp.template_name : modeLabel(insp), subtitle: insp.site_name, back: '#/inspections', focus: !admin, body: `
       <section class="card summary-card">
         <div class="row-between">${statusBadge(insp.status)}${score ? scoreBadge(score) : ''}</div>
@@ -77,9 +78,9 @@ export function reportViews({ shell, me }) {
       ${internal.length ? `<section class="card warn-card"><h3>Notes to the supervisor</h3>${internal.map((c) =>
         `<p><strong>${esc(c.name)}</strong> <span class="muted small">${esc(relDay(c.created_at))}</span><br>${esc(c.body)}</p>`).join('')}</section>` : ''}
       ${editing ? '<p class="note-box">You can tidy up notes and delete photos before approving.</p>' : ''}
-      ${insp.items.map((it, n) => `
+      ${insp.items.map((it, n) => `${areaHead(insp.items, nums, n)}
         <section class="card report-item">
-          ${it.label?.trim() || it.score ? `<div class="row-between"><h3>${it.label?.trim() ? `<span class="muted">${n + 1}.</span> ${esc(it.label)}` : ''}${it.added && insp.template_id ? ' <span class="badge neutral">Added on site</span>' : ''}</h3>${scoreBadge(it.score)}</div>` : ''}
+          ${it.label?.trim() || it.score ? `<div class="row-between"><h3>${it.label?.trim() ? `<span class="muted">${nums[n]}${it.area ? '' : '.'}</span> ${esc(it.label)}` : ''}${it.added && insp.template_id ? ' <span class="badge neutral">Added on site</span>' : ''}</h3>${scoreBadge(it.score)}</div>` : ''}
           ${actionPlanHtml(it, { canToggle: admin && insp.status !== 'draft', inspectionId: id })}
           ${editing ? `<label class="field"><span>Notes</span><textarea data-note="${esc(it.item_key)}" rows="2" placeholder="No notes">${esc(it.note)}</textarea></label>`
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}

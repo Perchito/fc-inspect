@@ -363,6 +363,13 @@ body:has(.app.focus) .toast { bottom: calc(96px + var(--safe-b)); }
 .edit-item { flex-direction: row; align-items: flex-start; gap: var(--s3); }
 .edit-item .item-num { margin-top: 10px; }
 .edit-item .hint-input { color: var(--muted); }
+.edit-area { background: var(--blue-soft, var(--bg)); align-items: center; }
+.edit-area input { font-weight: 700; }
+.edit-area .item-num { margin-top: 0; }
+.edit-area .edit-tools { flex-direction: row; }
+.edit-item.sub { margin-left: var(--s5, 24px); }
+.two-btn { display: flex; gap: var(--s3); }
+.area-h { margin: var(--s4) 0 var(--s2); font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--blue); }
 .edit-tools { display: flex; flex-direction: column; gap: 2px; }
 @media (min-width: 640px) { .edit-tools { flex-direction: row; } }
 .profile strong { font-size: 18px; }

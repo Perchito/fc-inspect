@@ -261,3 +261,17 @@ export async function savePdf(url, fallbackName = 'FC-Inspection.pdf') {
   document.body.append(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
+
+// ── areas: template items can be grouped under an area (1. Kitchen → 1.1 Kettle, 1.2 Fridge) ──
+// numbers like "1", "1.1", "2.3"; an item with no area gets its own top-level number
+export function itemNums(items) {
+  let a = 0, s = 0, prev = '';
+  return items.map((it) => {
+    if (!it.area) { prev = ''; return String(++a); }
+    if (it.area !== prev) { prev = it.area; a++; s = 0; }
+    return `${a}.${++s}`;
+  });
+}
+// heading shown before the first item of each area ('' otherwise)
+export const areaHead = (items, nums, i) => items[i].area && items[i].area !== items[i - 1]?.area
+  ? `<h4 class="area-h">${nums[i].split('.')[0]}. ${esc(items[i].area)}</h4>` : '';

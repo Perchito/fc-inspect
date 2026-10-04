@@ -3,7 +3,7 @@
 // so a dropped signal never loses work — including starting an inspection with no signal at all.
 import {
   esc, icon, api, del, toast, sheet, confirmSheet, viewer, skeleton, emptyState, errorState, statusBadge,
-  scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar,
+  scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar, itemNums, areaHead,
 } from './ui.js?v=__V__';
 
 // ── outbox ──────────────────────────────────────────────
@@ -288,7 +288,7 @@ export function inspectViews({ shell, me }) {
       e.currentTarget.disabled = true; e.currentTarget.textContent = 'Starting…';
       const id = crypto.randomUUID(), started_at = new Date().toISOString();
       const start_gps = await currentGps(6000);
-      const items = (o.template?.items || []).map((it) => ({ item_key: it.key, label: it.label, hint: it.hint || '' }));
+      const items = (o.template?.items || []).map((it) => ({ item_key: it.key, label: it.label, hint: it.hint || '', area: it.area || '' }));
       // queued like everything else, so starting works with no signal too
       await outbox.put({ id: `start:${id}`, inspectionId: id, kind: 'start', method: 'POST', url: '/api/inspections', contentType: 'application/json',
         body: JSON.stringify({ id, site_id: site.id, template_id: o.template?.id ?? null, mode: o.mode, start_gps, started_at }),
@@ -306,7 +306,7 @@ export function inspectViews({ shell, me }) {
     const states = insp.items.map((it) => itemState(insp, it, photos));
     const done = states.filter((s) => s === 'done').length, total = insp.items.length;
     const nextTodo = states.findIndex((s) => s !== 'done');
-    const free = isFree(insp);
+    const free = isFree(insp), nums = itemNums(insp.items);
     const view = shell({ title: itemTitle(insp), subtitle: insp.site_name, back: '#/inspections', focus: true, body: `
       <section class="card summary-card">
         <div class="row-between">${statusBadge(insp.status)}<span class="muted small">${esc(modeLabel(insp))}</span></div>
@@ -319,8 +319,8 @@ export function inspectViews({ shell, me }) {
       ${insp.mode === 'before_after' && total ? '<p class="note-box">Take the before photos now. Leave this inspection open during the clean, then come back and add an after photo next to each one.</p>' : ''}
       ${total ? `<h3 class="section-h">Items</h3><div class="stack">${insp.items.map((it, n) => {
         const count = photos.filter((p) => p.item_key === it.item_key).length;
-        return `<a class="card tap media item-card" href="${base(id)}/item/${n + 1}">
-          <span class="item-num state-${states[n]}">${states[n] === 'done' ? icon('check') : n + 1}</span>
+        return `${areaHead(insp.items, nums, n)}<a class="card tap media item-card" href="${base(id)}/item/${n + 1}">
+          <span class="item-num state-${states[n]}">${states[n] === 'done' ? icon('check') : nums[n]}</span>
           <span class="grow"><strong>${esc(it.label)}</strong>
             <small>${STATE_LABEL[states[n]]}${count ? ` · ${count} photo${count === 1 ? '' : 's'}` : ''}${it.note?.trim() ? ' · note' : ''}</small></span>
           ${scoreBadge(it.score)}${icon('chevron', 'chev')}</a>`;
@@ -352,8 +352,8 @@ export function inspectViews({ shell, me }) {
     const view = shell({ title: `Item ${n} of ${total}`, subtitle: insp.site_name, back: base(id), focus: true, body: `
       <div class="progress thin" aria-hidden="true"><span style="width:${(n / total) * 100}%"></span></div>
       <header class="item-head">
-        <p class="eyebrow">${esc(itemTitle(insp))}</p>
-        <h1>${esc(it.label)}</h1>
+        <p class="eyebrow">${esc(it.area || itemTitle(insp))}</p>
+        <h1>${it.area ? `<span class="muted">${itemNums(insp.items)[n - 1]}</span> ` : ''}${esc(it.label)}</h1>
         ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
         ${it.added ? `<p class="small">${free ? '' : '<span class="badge neutral">Added on site</span> '}<button class="link danger" id="remove-item">Remove this item</button></p>` : ''}
       </header>
@@ -547,7 +547,7 @@ export function inspectViews({ shell, me }) {
     const done = states.filter((s) => s === 'done').length, total = insp.items.length;
     const avg = avgScore(insp.items), low = insp.items.filter((it) => it.score && it.score < LOW_SCORE);
     const afterPending = insp.mode === 'before_after' ? states.filter((s) => s === 'after').length : 0;
-    const notes = insp.items.filter((it) => it.note?.trim()).length;
+    const notes = insp.items.filter((it) => it.note?.trim()).length, nums = itemNums(insp.items);
     const stat = (label, value, tone = '') => `<div class="stat ${tone}"><span>${label}</span><strong>${value}</strong></div>`;
     const view = shell({ title: 'Review', subtitle: insp.site_name, back: `${base(id)}/item/${total}`, focus: true, body: `
       <section class="card">
@@ -565,7 +565,7 @@ export function inspectViews({ shell, me }) {
       ${afterPending ? `<p class="note-box">${afterPending} item${afterPending === 1 ? ' still needs' : 's still need'} after photos. You can still submit.</p>` : ''}
       <h3 class="section-h">Items</h3>
       <div class="list-card">${insp.items.map((it, i) => `<a class="row-link" href="${base(id)}/item/${i + 1}">
-        <span class="item-num sm state-${states[i]}">${states[i] === 'done' ? icon('check') : i + 1}</span>
+        <span class="item-num sm state-${states[i]}">${states[i] === 'done' ? icon('check') : nums[i]}</span>
         <span class="row-main"><strong>${esc(it.label)}</strong><small>${STATE_LABEL[states[i]]}</small></span>${scoreBadge(it.score)}${icon('chevron', 'row-chev')}</a>`).join('')}</div>
       <div class="bottom-bar"><a class="btn primary block lg${problems.length ? ' disabled' : ''}" ${problems.length ? 'aria-disabled="true" href="#"' : `href="${base(id)}/sign"`}>
         Continue to sign-off ${icon('chevron')}</a></div>` });

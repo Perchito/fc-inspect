@@ -30,7 +30,7 @@ export function actionCard(a) {
   return `<a class="card tap action-row" href="#/actions/${a.inspection_id}/${encodeURIComponent(a.item_key)}">
     <div class="row-between"><span class="badge ${tone}">${a.action_done_at ? `${icon('check')} Completed` : esc(dueText(a.action_due))}</span>${scoreBadge(a.score)}</div>
     <strong class="card-title">${esc(a.action_what)}</strong>
-    <span class="card-sub">${esc(a.label)} · ${esc(a.site_name)}</span>
+    <span class="card-sub">${a.area ? `${esc(a.area)} › ` : ''}${esc(a.label)} · ${esc(a.site_name)}</span>
     <span class="card-meta"><span>${icon('user', 'inline')} ${esc(a.action_who || 'Unassigned')}</span><span class="card-cta">${icon('chevron')}</span></span>
   </a>`;
 }
@@ -158,7 +158,7 @@ export function listViews({ shell, me }) {
         <h2 class="action-title">${esc(it.action_what)}</h2>
         <p class="muted">${esc(insp.site_name)} · ${esc(insp.client_name)}</p>
         <dl class="facts">
-          <dt>Item</dt><dd>${esc(it.label)} ${scoreBadge(it.score)}</dd>
+          <dt>Item</dt><dd>${it.area ? `${esc(it.area)} › ` : ''}${esc(it.label)} ${scoreBadge(it.score)}</dd>
           <dt>Assigned to</dt><dd>${esc(it.action_who)}</dd>
           <dt>Deadline</dt><dd>${esc(dueText(it.action_due))}</dd>
           ${it.action_done_at ? `<dt>Completed</dt><dd>${esc(fmtDateTime(it.action_done_at))}${it.action_done_by_name ? ` by ${esc(it.action_done_by_name)}` : ''}</dd>` : ''}
