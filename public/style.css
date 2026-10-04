@@ -426,3 +426,11 @@ body:has(.app.focus) .toast { bottom: calc(96px + var(--safe-b)); }
 @media (min-width: 1300px) { .card-grid { grid-template-columns: repeat(3, 1fr); } }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* sheet field type 'choice': radio buttons shown as tappable chips */
+.choice { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s2); }
+.choice legend { font-weight: 600; font-size: 14px; margin-bottom: var(--s2); padding: 0; }
+.chip-radio input { position: absolute; opacity: 0; pointer-events: none; }
+.chip-radio span { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 16px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface); font-weight: 600; cursor: pointer; }
+.chip-radio input:checked + span { background: var(--navy); border-color: var(--navy); color: #fff; }
+.chip-radio input:focus-visible + span { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 30%, transparent); }

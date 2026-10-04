@@ -147,6 +147,11 @@ export function sheet({ title, text = '', fields = [], submitLabel = 'Save', dan
             ${(f.value || []).includes(o.value) ? 'checked' : ''}><span>${esc(o.label)}</span></label>`).join('') : `<p class="muted small">${esc(f.empty || 'None yet')}</p>`}
         </fieldset>`;
       }
+      if (f.type === 'choice') { // one-tap chips (radio buttons) instead of a dropdown
+        return `<fieldset class="choice" data-field="${f.name}"><legend>${esc(f.label)}</legend>
+          ${f.options.map((o) => `<label class="chip-radio"><input type="radio" name="${f.name}" value="${esc(o.value)}"
+            ${o.value === f.value ? 'checked' : ''}><span>${esc(o.label)}</span></label>`).join('')}</fieldset>`;
+      }
       const common = `id="${id}" name="${f.name}" ${f.required ? 'required' : ''} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ''}`;
       const input = f.type === 'select'
         ? `<select ${common}>${f.options.map((o) => `<option value="${esc(o.value)}" ${o.value === f.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`

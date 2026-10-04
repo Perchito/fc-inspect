@@ -227,13 +227,13 @@ export function inspectViews({ shell, me }) {
   // add an item found on site (this inspection only, never the template)
   // an item added on site goes in an area: an existing one (the current item's by default) or a new one
   async function addItem(insp, { first = false, area = '' } = {}) {
-    const NEW = '\n', areas = [...new Set(insp.items.map((i) => i.area).filter(Boolean))];
+    const NEW = '+new', areas = [...new Set(insp.items.map((i) => i.area).filter(Boolean))];
     const v = await sheet({
       title: first ? 'Add the first item' : 'Add an item', submitLabel: 'Add item',
       text: isFree(insp) ? 'Name what you are photographing.' : 'Something you found that is not on the checklist.',
       fields: [
-        { name: 'area', label: 'Area', type: 'select', value: area || (areas.length ? areas.at(-1) : ''),
-          options: [...(areas.length ? areas.map((a) => ({ value: a, label: a })) : [{ value: '', label: 'No area' }]), { value: NEW, label: '+ New area…' }] },
+        { name: 'area', label: 'Area', type: 'choice', value: area || (areas.length ? areas.at(-1) : ''),
+          options: [...(areas.length ? areas.map((a) => ({ value: a, label: a })) : [{ value: '', label: 'No area' }]), { value: NEW, label: '+ New area' }] },
         { name: 'newarea', label: 'New area name', placeholder: 'e.g. Laundry room' },
         { name: 'label', label: 'Item name', placeholder: 'e.g. Oven, fire exit door, stained carpet', required: true },
       ],
