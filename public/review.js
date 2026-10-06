@@ -5,7 +5,6 @@ import {
   relDay, dueText, LOW_SCORE, savePdf, itemNums, areaHead,
 } from './ui.js?v=__V__';
 
-const withNotes = () => { try { return localStorage.getItem('fci-pdf-notes') !== '0'; } catch { return true; } };
 const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
 
 // photos of one item: a grid, or before/after pairs (server photos only)
@@ -88,27 +87,17 @@ export function reportViews({ shell, me }) {
         </section>`).join('')}
       ${insp.inspector_sig ? `<section class="card"><h3>Supervisor signature</h3><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}">
         <p class="small muted">${esc(insp.inspector_name)} · ${esc(fmtDateTime(insp.finished_at))}</p></section>` : ''}
-      <section class="card">
-        <div class="row-between"><h3>PDF report</h3>
-          <label class="switch"><input type="checkbox" id="with-notes" ${withNotes() ? 'checked' : ''}><span>Include notes</span></label></div>
-        <div class="btn-row">
-          <a class="btn" data-pdf href="/api/inspections/${id}/pdf" target="_blank" rel="noopener">${icon('file')} View PDF</a>
-          <a class="btn" data-pdf data-download href="/api/inspections/${id}/pdf?download=1">${icon('down')} Download</a>
-        </div>
+      <section class="card"><h3>PDF report</h3>
+        ${[['', 'With notes', 'Scores, photos and the supervisor’s notes'], ['notes=0&', 'Without notes', 'Scores and photos only — e.g. to send to the client']].map(([q, title, sub]) => `
+        <div class="pdf-opt"><div><strong>${title}</strong><small>${sub}</small></div>
+          <div class="btn-row"><a class="btn sm" href="/api/inspections/${id}/pdf${q ? `?${q.slice(0, -1)}` : ''}" target="_blank" rel="noopener">${icon('file')} View</a>
+            <a class="btn sm" data-download href="/api/inspections/${id}/pdf?${q}download=1">${icon('down')} Download</a></div></div>`).join('')}
       </section>
       ${admin && insp.status === 'approved' && !insp.client_signed_at ? '<button class="btn ghost-danger block" id="unapprove">Move back to “To review”</button>' : ''}
       ${editing ? `<div class="bottom-bar two"><button class="btn lg" id="return">Send back</button>
         <button class="btn primary lg" id="approve">${icon('check')} Approve</button></div>` : ''}` });
 
-    // PDF links follow the notes switch; remembered on this device
-    const $notes = view.querySelector('#with-notes');
-    const pdfLinks = () => view.querySelectorAll('[data-pdf]').forEach((a) => {
-      const q = new URLSearchParams({ ...('download' in a.dataset ? { download: 1 } : {}), ...($notes.checked ? {} : { notes: 0 }) });
-      a.href = `/api/inspections/${id}/pdf${q.size ? `?${q}` : ''}`;
-    });
-    $notes.addEventListener('change', () => { try { localStorage.setItem('fci-pdf-notes', $notes.checked ? '1' : '0'); } catch {} pdfLinks(); });
-    pdfLinks();
-    view.querySelector('[data-download]').addEventListener('click', (e) => { e.preventDefault(); savePdf(e.currentTarget.href); });
+    view.querySelectorAll('[data-download]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); savePdf(e.currentTarget.href); }));
 
     view.querySelectorAll('[data-photos]').forEach((box) => box.addEventListener('click', (e) => {
       const b = e.target.closest('[data-view]'); if (!b) return;
