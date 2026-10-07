@@ -105,7 +105,7 @@ app.use(express.static('public', { setHeaders: (res) => res.set('Cache-Control',
 const PG_ERRORS = {
   '22P02': [400, 'Invalid id'],
   '23503': [409, 'This is still linked to other records (e.g. inspections), so it was left as it is'],
-  '23505': [409, 'That email is already used by another account'],
+  '23505': [409, 'That email already has a login — find them in the Team list (they may be Inactive) and use Edit or Reset password'],
 };
 app.use((err, req, res, next) => {
   if (err.status === 400) return res.status(400).json({ error: err.message });

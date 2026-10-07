@@ -7,6 +7,7 @@ import {
 const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor', cleaner: 'Cleaner', client: 'Client' };
 // for now only admins and supervisors log in (no client/cleaner portal); reports go to clients as PDFs
 const ACTIVE_ROLES = ['admin', 'inspector'];
+const ROLE_HELP = 'Supervisors do inspections. Admins also review, manage clients, templates and the team.';
 
 export function adminViews({ shell, me, setLeaveGuard }) {
   const fail = (view, e, again) => { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = again; };
@@ -240,30 +241,33 @@ export function adminViews({ shell, me, setLeaveGuard }) {
     const userFields = (u = {}) => [
       { name: 'name', label: 'Name', value: u.name, required: true },
       { name: 'email', label: 'Email', type: 'email', value: u.email, required: true },
-      { name: 'role', label: 'Role', type: 'select', value: u.role || 'inspector', options: roleOptions(u.role),
-        hint: 'Supervisors do inspections. Admins also review, manage clients, templates and the team.' },
-      ...(u.id ? [{ name: 'active', label: 'Status', type: 'select', value: u.active ? 'yes' : 'no',
+      // one-tap chips, not dropdowns: an iPhone dropdown inside the sheet would not change
+      { name: 'role', label: 'Role', type: 'choice', value: u.role || 'inspector', options: roleOptions(u.role) },
+      ...(u.id ? [{ name: 'active', label: 'Status', type: 'choice', value: u.active ? 'yes' : 'no',
         options: [{ value: 'yes', label: 'Active — can log in' }, { value: 'no', label: 'Inactive — blocked' }] }] : []),
     ];
     const showPassword = (u) => sheet({ title: `Login for ${u.name || u.email}`, submitLabel: 'Done',
       text: 'Shown once — send it to them securely. They log in with their email and this password.',
       fields: [{ name: 'password', label: 'Password', value: u.password }] });
-    document.getElementById('add')?.addEventListener('click', async () => {
-      const u = await sheet({ title: 'Add person', fields: userFields(), submitLabel: 'Create login', onSubmit: (v) => post('/admin/users', v) });
+    const addPerson = async () => {
+      const u = await sheet({ title: 'Add person', text: ROLE_HELP, fields: userFields(), submitLabel: 'Create login', onSubmit: (v) => post('/admin/users', v) });
       if (u) { await showPassword(u); users(); }
-    });
+    };
+    document.getElementById('add')?.addEventListener('click', addPerson);
     let list;
     try { list = await api('/admin/users'); } catch (e) { return fail(view, e, users); }
-    view.innerHTML = `<div class="card-grid">${list.map((u) => `<div class="card media user-card${u.active ? '' : ' inactive'}">
+    view.innerHTML = `<button class="btn primary block" id="add-person" style="margin-bottom:12px">${icon('plus')} Add person</button>
+      <div class="card-grid">${list.map((u) => `<div class="card media user-card${u.active ? '' : ' inactive'}">
         ${avatar(u.name, u.role === 'admin' ? 'navy' : '')}
         <span class="grow"><strong>${esc(u.name)}${u.id === me().id ? ' <span class="muted small">(you)</span>' : ''}</strong>
           <small>${esc(u.email)}</small>
           <span class="tags"><span class="badge ${u.role === 'admin' ? 'blue' : 'neutral'}">${ROLE_LABEL[u.role]}</span>${u.active ? '' : '<span class="badge red">Inactive</span>'}</span></span>
         <div class="stack tight"><button class="btn sm" data-edit="${u.id}">Edit</button><button class="btn sm" data-reset="${u.id}">Reset password</button></div>
       </div>`).join('')}</div>`;
+    view.querySelector('#add-person').onclick = addPerson;
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = async () => {
       const u = list.find((x) => x.id === b.dataset.edit);
-      if (await sheet({ title: `Edit ${u.name}`, fields: userFields(u), onSubmit: (v) => put(`/admin/users/${u.id}`, { ...v, active: v.active === 'yes' }) })) { toast('Saved'); users(); }
+      if (await sheet({ title: `Edit ${u.name}`, text: ROLE_HELP, fields: userFields(u), onSubmit: (v) => put(`/admin/users/${u.id}`, { ...v, active: v.active === 'yes' }) })) { toast('Saved'); users(); }
     });
     view.querySelectorAll('[data-reset]').forEach((b) => b.onclick = async () => {
       const u = list.find((x) => x.id === b.dataset.reset);

@@ -183,6 +183,8 @@ export function sheet({ title, text = '', fields = [], submitLabel = 'Save', dan
       try { close(onSubmit ? await onSubmit(values()) : values()); }
       catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
     };
+    // focus the dialog, not its first field: iOS won't open a dropdown that showModal() auto-focused
+    d.autofocus = true;
     d.showModal();
     if (fields.length && !matchMedia('(pointer: coarse)').matches) form.querySelector('input:not([type=checkbox]), select, textarea')?.focus();
   });
