@@ -67,7 +67,7 @@ export function reportViews({ shell, me }) {
         <p class="muted">${esc(insp.client_name)}${insp.site_address ? ` · ${esc(insp.site_address)}` : ''}</p>
         <dl class="facts">
           <dt>Inspection</dt><dd>${esc(modeLabel(insp))}${insp.template_id ? ` · ${esc(insp.template_name)}` : ''}</dd>
-          <dt>Supervisor</dt><dd>${esc(insp.inspector_name)}</dd>
+          <dt>${insp.contributor_names?.length ? 'Supervisors' : 'Supervisor'}</dt><dd>${esc([insp.inspector_name, ...(insp.contributor_names || []).filter((n) => n !== insp.inspector_name)].join(', '))}</dd>
           <dt>Started</dt><dd>${esc(fmtDateTime(insp.started_at))} · ${maps(insp.start_gps)}</dd>
           <dt>Finished</dt><dd>${esc(fmtDateTime(insp.finished_at))} · ${maps(insp.end_gps)}</dd>
           ${low ? `<dt>Issues</dt><dd><span class="badge red">${low} below ${LOW_SCORE}/10</span></dd>` : ''}
@@ -86,7 +86,7 @@ export function reportViews({ shell, me }) {
           <div data-photos="${esc(it.item_key)}">${itemPhotosHtml(insp, it)}</div>
         </section>`).join('')}
       ${insp.inspector_sig ? `<section class="card"><h3>Supervisor signature</h3><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}">
-        <p class="small muted">${esc(insp.inspector_name)} · ${esc(fmtDateTime(insp.finished_at))}</p></section>` : ''}
+        <p class="small muted">${esc(insp.submitted_by_name || insp.inspector_name)} · ${esc(fmtDateTime(insp.finished_at))}</p></section>` : ''}
       ${insp.comments.length || canComment ? `<section class="card" id="comments"><h3>Comments</h3>
         ${insp.comments.map((c) => `<p><strong>${esc(c.name)}</strong> <span class="muted small">${esc(relDay(c.created_at))}</span><br>${esc(c.body).replace(/\n/g, '<br>')}</p>`).join('') || '<p class="muted small">No comments yet.</p>'}
         ${canComment ? `<label class="field"><span>Add a comment</span><textarea id="comment-body" rows="2" maxlength="2000" placeholder="Write a comment"></textarea></label>

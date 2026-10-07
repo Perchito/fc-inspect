@@ -11,8 +11,8 @@ const open = (i) => ['draft', 'returned'].includes(i.status) && !i.sending;
 
 // one inspection as a tappable card
 export function inspectionCard(i, { admin = false, meId = null } = {}) {
-  // only the supervisor who started an inspection can continue it; others can look at it
-  const mineToDo = open(i) && (!i.inspector_id || i.inspector_id === meId);
+  // open inspections are shared: anyone can continue them, even while someone else is working on it
+  const mineToDo = open(i);
   const cta = i.sending ? '' : mineToDo ? 'Continue' : admin && i.status === 'submitted' ? 'Review' : open(i) ? 'View' : '';
   return `<a class="card tap insp-card" href="#/inspections/${i.id}">
     <div class="row-between">${statusBadge(i.status, { sending: i.sending })}${i.avg_score ? scoreBadge(+i.avg_score) : ''}</div>
@@ -21,7 +21,7 @@ export function inspectionCard(i, { admin = false, meId = null } = {}) {
     ${open(i) && i.item_count ? progressBar(i.done_count, i.item_count) : ''}
     ${i.status === 'returned' ? `<span class="card-flag">${icon('alert')} Sent back — changes needed</span>` : ''}
     ${i.open_actions ? `<span class="card-flag red">${icon('alert')} ${i.open_actions} urgent action${i.open_actions === 1 ? '' : 's'}</span>` : ''}
-    <span class="card-meta"><span>${esc(relDay(i.finished_at || i.started_at))}${admin && i.inspector_name ? ` · ${esc(i.inspector_name)}` : ''}${i.local ? ' · on this phone' : ''}</span>
+    <span class="card-meta"><span>${esc(relDay(i.finished_at || i.started_at))}${i.inspector_name && i.inspector_id !== meId ? ` · ${esc(i.inspector_name)}` : ''}${i.contributors?.length ? ` +${i.contributors.length}` : ''}${i.local ? ' · on this phone' : ''}</span>
       ${cta ? `<span class="card-cta">${cta} ${icon('chevron')}</span>` : ''}</span>
   </a>`;
 }
@@ -47,8 +47,7 @@ function grouped(list, card) {
 export function listViews({ shell, me }) {
   const isAdmin = () => me().role === 'admin';
   const allInspections = async () => {
-    if (!isAdmin()) return fetchMine();
-    const [all, mine] = await Promise.all([api('/admin/inspections'), fetchMine()]);
+    const [all, mine] = await Promise.all([api('/inspections/all'), fetchMine()]);
     const local = mine.filter((m) => m.local || m.sending), ids = new Set(all.map((i) => i.id));
     return [...local.filter((m) => !ids.has(m.id)), ...all.map((i) => ({ ...i, sending: local.some((m) => m.id === i.id && m.sending) }))];
   };

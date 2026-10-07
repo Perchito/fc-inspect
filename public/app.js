@@ -182,7 +182,7 @@ async function inspectionRoute(id, sub, n) {
     if (sub === 'sign') return await insp.sign(id);
     if (sub === 'done') return await insp.done(id);
     const data = await loadInspection(id, { fresh: true });
-    if (data.inspector_id === me.id && editable(data)) return await insp.detail(data);
+    if (editable(data)) return await insp.detail(data); // open inspections are shared by every supervisor
     return await report.report(data, () => inspectionRoute(id));
   } catch (e) {
     if (e.status === 401) return;

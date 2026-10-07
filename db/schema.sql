@@ -145,3 +145,8 @@ alter table inspection_items add column if not exists area text not null default
 
 -- prospects: a client created by a quick inspection (no site picked); named later, then made a real client
 alter table clients add column if not exists prospect boolean not null default false;
+
+-- shared inspections: any supervisor can work on an open one. contributors = everyone other than the
+-- starter who changed it; submitted_by = whoever signed and submitted
+alter table inspections add column if not exists contributors uuid[] not null default '{}';
+alter table inspections add column if not exists submitted_by uuid references users(id);

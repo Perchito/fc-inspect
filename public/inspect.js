@@ -323,6 +323,31 @@ export function inspectViews({ shell, me }) {
     };
   }
 
+  // ── live: while an open inspection is on screen, pick up other supervisors' changes every 15 s ──
+  let liveTimer = null, pickingUntil = 0;
+  // never redraw while the camera / photo picker is open: the chosen photo would be lost with the old input
+  document.addEventListener('click', (e) => { if (e.target.closest('label')?.querySelector('input[type=file]') || e.target.matches?.('input[type=file]')) pickingUntil = Date.now() + 120_000; }, true);
+  document.addEventListener('change', (e) => { if (e.target.type === 'file') pickingUntil = 0; }, true);
+  const sig = (i) => JSON.stringify([i.status, i.items.map((x) => [x.item_key, x.label, x.area, x.score, x.note, x.action_what, x.action_who, x.action_due]),
+    i.photos.map((p) => p.id).sort(), (i.comments || []).length]);
+  function live(id, rerender) {
+    clearInterval(liveTimer);
+    const hash = location.hash;
+    liveTimer = setInterval(async () => {
+      if (location.hash !== hash) { clearInterval(liveTimer); return; }
+      if (document.hidden || !navigator.onLine || Date.now() < pickingUntil || document.querySelector('dialog[open]')
+        || document.activeElement?.matches('input, textarea, select')) return;
+      const before = current?.id === id ? sig(current) : '';
+      let fresh;
+      try { fresh = await loadInspection(id, { fresh: true }); } catch { return; }
+      if (location.hash !== hash || sig(fresh) === before) return;
+      if (!editable(fresh)) { dispatchEvent(new HashChangeEvent('hashchange')); return; } // someone submitted it
+      const y = scrollY;
+      await rerender(fresh);
+      scrollTo(0, y);
+    }, 15_000);
+  }
+
   // ── quick inspection: no site. The server saves the business as a prospect, named now or later ──
   async function quick() {
     watchGps();
@@ -362,7 +387,8 @@ export function inspectViews({ shell, me }) {
       <section class="card summary-card">
         <div class="row-between">${statusBadge(insp.status)}<span class="muted small">${esc(modeLabel(insp))}</span></div>
         <h2>${esc(insp.site_name)}</h2>
-        <p class="muted">${esc(insp.client_name)} · started ${esc(relDay(insp.started_at))}</p>
+        <p class="muted">${esc(insp.client_name)} · started ${esc(relDay(insp.started_at))}${insp.inspector_id && insp.inspector_id !== me().id ? ` by ${esc(insp.inspector_name)}` : ''}</p>
+        ${insp.contributor_names?.length ? `<p class="small muted">${icon('users', 'inline')} Worked on by ${esc([insp.inspector_name, ...insp.contributor_names.filter((n) => n !== insp.inspector_name)].join(', '))}</p>` : ''}
         ${insp.client_prospect ? `<p class="small"><a href="#/prospects">${icon('pen', 'inline')} ${insp.client_name === 'New prospect' ? 'Add the business name' : 'Edit business details'}</a></p>` : ''}
         ${total ? progressBar(done, total) : ''}
       </section>
@@ -385,6 +411,7 @@ export function inspectViews({ shell, me }) {
         ? `<a class="btn primary block lg" href="${base(id)}/item/${nextTodo + 1}">${done ? 'Continue' : 'Start'} · item ${nextTodo + 1} of ${total} ${icon('chevron')}</a>`
         : `<a class="btn primary block lg" href="${base(id)}/review">Review &amp; submit ${icon('chevron')}</a>`}</div>` : ''}` });
     view.querySelector('#add-item').onclick = () => addItem(insp, { first: !total });
+    live(id, (fresh) => detail(fresh));
     view.querySelector('#comment-post')?.addEventListener('click', async (e) => {
       const ta = view.querySelector('#comment-body'), body = ta.value.trim();
       if (!body) { ta.focus(); return; }
@@ -577,6 +604,14 @@ export function inspectViews({ shell, me }) {
     }
 
     view.querySelector('#add-item').onclick = () => { saveItem(); addItem(insp, { area: it.area }); };
+    // someone else may add or remove items: stay on this item by its key, wherever it now sits
+    live(id, (fresh) => {
+      saveItem();
+      const k = fresh.items.findIndex((x) => x.item_key === it.item_key);
+      if (k < 0) location.replace(base(id));
+      else if (k + 1 !== n) location.replace(`${base(id)}/item/${k + 1}`);
+      else return item(id, n);
+    });
     view.querySelector('#remove-item')?.addEventListener('click', async () => {
       if (!(await confirmSheet(`Remove "${it.label}"?`, { text: 'Its photos and notes are removed from this inspection.', okLabel: 'Remove' }))) return;
       clearTimeout(saveTimer); dirty = false;
@@ -635,6 +670,7 @@ export function inspectViews({ shell, me }) {
       <div class="bottom-bar"><a class="btn primary block lg${problems.length ? ' disabled' : ''}" ${problems.length ? 'aria-disabled="true" href="#"' : `href="${base(id)}/sign"`}>
         Continue to sign-off ${icon('chevron')}</a></div>` });
     view.querySelector('.bottom-bar .disabled')?.addEventListener('click', (e) => { e.preventDefault(); toast('Finish the items listed above first', { error: true }); });
+    live(id, () => review(id));
   }
 
   // ── sign-off + submit ──
