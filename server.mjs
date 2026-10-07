@@ -76,7 +76,7 @@ app.use('/api/admin', requireUser('admin'), adminRoutes(pool), reviewRoutes(pool
 app.get('/api/inspections/:id/pdf', requireUser(), async (req, res) => {
   const insp = await loadInspection(pool, req.user, req.params.id);
   if (!insp) return res.status(404).json({ error: 'Inspection not found' });
-  const pdf = await pdfFor(pool, insp, { notes: req.query.notes !== '0' });
+  const pdf = await pdfFor(pool, insp, { notes: req.query.notes !== '0' }, req.user.role);
   res.set({
     'content-type': 'application/pdf', 'cache-control': 'private, no-store',
     'content-disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${pdfFilename(insp)}"`,
