@@ -138,21 +138,23 @@ export function signaturePad(canvas) {
 
 // ── item rules (mirror the server's itemProblems / ITEM_DONE_SQL) ──
 const planDone = (it) => !!(it.action_what?.trim() && it.action_who?.trim() && it.action_due);
+// prospects (quick inspections) get a comment per item instead of urgent action plans
+const planOk = (insp, it) => !!insp.client_prospect || planDone(it);
 // state of one item: 'todo' | 'score' | 'plan' | 'after' | 'done'
 export function itemState(insp, it, photos) {
   const ps = photos.filter((p) => p.item_key === it.item_key);
   if (insp.mode === 'check') {
     if (!it.score) return ps.length || it.note?.trim() ? 'score' : 'todo';
-    return it.score < LOW_SCORE && !planDone(it) ? 'plan' : 'done';
+    return it.score < LOW_SCORE && !planOk(insp, it) ? 'plan' : 'done';
   }
   const befores = ps.filter((p) => p.phase !== 'after');
   if (!befores.length) return 'todo';
   if (befores.some((b) => !ps.some((a) => a.phase === 'after' && a.pair_id === b.id))) return 'after';
-  return it.score && it.score < LOW_SCORE && !planDone(it) ? 'plan' : 'done'; // score optional here
+  return it.score && it.score < LOW_SCORE && !planOk(insp, it) ? 'plan' : 'done'; // score optional here
 }
 const STATE_LABEL = { todo: 'Not started', score: 'Needs a score', plan: 'Action plan needed', after: 'After photo pending', done: 'Done' };
-export const itemProblem = (it, mode) => !it.score ? (mode === 'check' ? 'Give this item a score before moving on.' : '')
-  : it.score < LOW_SCORE && !planDone(it) ? 'Scores below 7 need an action plan: what, who and a deadline.' : '';
+export const itemProblem = (it, mode, prospect = false) => !it.score ? (mode === 'check' ? 'Give this item a score before moving on.' : '')
+  : !prospect && it.score < LOW_SCORE && !planDone(it) ? 'Scores below 7 need an action plan: what, who and a deadline.' : '';
 export const avgScore = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
 const randomKey = () => [...crypto.getRandomValues(new Uint8Array(5))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -180,7 +182,7 @@ export async function loadInspection(id, { fresh = false } = {}) {
     if (!start || !(err.offline || err.status === 404)) throw err;
     const l = start.local;
     insp = { id, status: 'draft', mode: l.mode, template_id: l.template_id, template_name: l.template_name, site_name: l.site_name,
-      site_address: l.site_address, client_name: l.client_name, started_at: l.started_at, inspector_name: l.inspector_name,
+      site_address: l.site_address, client_name: l.client_name, client_prospect: !!l.client_prospect, started_at: l.started_at, inspector_name: l.inspector_name,
       inspector_id: l.inspector_id, items: l.items.map((it) => ({ ...it, note: '' })), photos: [], comments: [], local: true };
   }
   for (const e of pending) {
@@ -341,7 +343,7 @@ export function inspectViews({ shell, me }) {
       const start_gps = await currentGps(6000);
       await outbox.put({ id: `start:${id}`, inspectionId: id, kind: 'start', method: 'POST', url: '/api/inspections', contentType: 'application/json',
         body: JSON.stringify({ id, quick: { name }, template_id: null, mode, start_gps, started_at }),
-        local: { mode, template_id: null, template_name: 'No checklist', site_name: name || 'New prospect', site_address: null,
+        local: { mode, template_id: null, template_name: 'No checklist', site_name: name || 'New prospect', site_address: null, client_prospect: true,
           client_name: name || 'New prospect', started_at, inspector_name: me().name, inspector_id: me().id, items: [] } });
       current = null;
       location.hash = base(id);
@@ -528,9 +530,10 @@ export function inspectViews({ shell, me }) {
 
     // notes stay folded away until needed
     const $note = view.querySelector('#note-wrap');
+    const pro = !!insp.client_prospect;
     const renderNote = (open) => {
-      $note.innerHTML = open || it.note?.trim()
-        ? `<label class="field"><span>Notes</span><textarea id="note" rows="3" placeholder="Anything the office should know, e.g. grease behind the fryer">${esc(it.note)}</textarea></label>`
+      $note.innerHTML = open || pro || it.note?.trim()
+        ? `<label class="field"><span>${pro ? 'Comment' : 'Notes'}</span><textarea id="note" rows="3" placeholder="${pro ? 'What did you see? e.g. heavy grease build-up behind the fryer' : 'Anything the office should know, e.g. grease behind the fryer'}">${esc(it.note)}</textarea></label>`
         : `<button class="add-note" id="open-note">${icon('pen')} Add a note</button>`;
       $note.querySelector('#open-note')?.addEventListener('click', () => { renderNote(true); $note.querySelector('textarea').focus(); });
       $note.querySelector('textarea')?.addEventListener('input', (e) => { it.note = e.target.value; changed(); });
@@ -543,7 +546,7 @@ export function inspectViews({ shell, me }) {
       const renderScore = () => {
         $word.innerHTML = it.score ? `<strong>${it.score}</strong> · ${scoreWord(it.score)}${ba ? ' <span class="muted small">(tap again to clear)</span>' : ''}` : 'Tap a score';
         $word.className = `score-word${it.score && it.score < LOW_SCORE ? ' low' : ''}`;
-        if (!(it.score && it.score < LOW_SCORE)) { $plan.innerHTML = ''; return; }
+        if (pro || !(it.score && it.score < LOW_SCORE)) { $plan.innerHTML = ''; return; }
         $plan.innerHTML = planDone(it)
           ? `<div class="action-card"><div class="row-between"><strong>${icon('alert')} Urgent action</strong><button class="link" id="edit-plan">Edit</button></div>
               <p>${esc(it.action_what)}</p><p class="small muted">${esc(it.action_who)} · by ${esc(new Date(`${it.action_due}T12:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}</p></div>`
@@ -589,7 +592,7 @@ export function inspectViews({ shell, me }) {
     });
     // can't move on until the item is scored (and planned if low)
     view.querySelector('#next').addEventListener('click', (e) => {
-      const problem = itemProblem(it, insp.mode);
+      const problem = itemProblem(it, insp.mode, insp.client_prospect);
       if (!problem) return;
       e.preventDefault();
       const m = view.querySelector('#missing'); m.textContent = problem; m.hidden = false;
@@ -605,7 +608,7 @@ export function inspectViews({ shell, me }) {
     if (!editable(insp) || !insp.items.length) { location.replace(base(id)); return; }
     const photos = await allPhotos(insp);
     const states = insp.items.map((it) => itemState(insp, it, photos));
-    const problems = insp.items.map((it, i) => [i, itemProblem(it, insp.mode)]).filter(([, p]) => p);
+    const problems = insp.items.map((it, i) => [i, itemProblem(it, insp.mode, insp.client_prospect)]).filter(([, p]) => p);
     const done = states.filter((s) => s === 'done').length, total = insp.items.length;
     const avg = avgScore(insp.items), low = insp.items.filter((it) => it.score && it.score < LOW_SCORE);
     const afterPending = insp.mode === 'before_after' ? states.filter((s) => s === 'after').length : 0;
@@ -620,7 +623,7 @@ export function inspectViews({ shell, me }) {
         ${avg ? stat('Overall score', `${avg}<small>/10</small>`, avg < LOW_SCORE ? 'bad' : 'good') : stat('Inspection', esc(modeLabel(insp)))}
         ${insp.mode === 'check' ? stat('Issues', low.length, low.length ? 'bad' : '') : stat('After photos due', afterPending, afterPending ? 'warn' : '')}
         ${stat('Photos', photos.length)}${stat('Notes', notes)}
-        ${insp.mode === 'check' || low.length ? stat('Actions', low.filter(planDone).length, low.length ? 'warn' : '') : ''}
+        ${!insp.client_prospect && (insp.mode === 'check' || low.length) ? stat('Actions', low.filter(planDone).length, low.length ? 'warn' : '') : ''}
       </div>
       ${problems.length ? `<section class="card warn-card"><h3>${icon('alert')} Before you can submit</h3><ul class="plain">${problems.map(([i, p]) =>
         `<li><a href="${base(id)}/item/${i + 1}"><strong>${esc(insp.items[i].label)}</strong> — ${esc(p)}</a></li>`).join('')}</ul></section>` : ''}
@@ -637,7 +640,7 @@ export function inspectViews({ shell, me }) {
   // ── sign-off + submit ──
   async function sign(id) {
     const insp = await loadInspection(id);
-    if (!editable(insp) || !insp.items.length || insp.items.some((it) => itemProblem(it, insp.mode))) { location.replace(`${base(id)}/review`); return; }
+    if (!editable(insp) || !insp.items.length || insp.items.some((it) => itemProblem(it, insp.mode, insp.client_prospect))) { location.replace(`${base(id)}/review`); return; }
     const view = shell({ title: 'Sign-off', subtitle: insp.site_name, back: `${base(id)}/review`, focus: true, body: `
       <section class="card">
         <dl class="facts"><dt>Site</dt><dd>${esc(insp.site_name)}</dd><dt>Inspection</dt><dd>${esc(itemTitle(insp))}</dd>
