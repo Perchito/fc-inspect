@@ -1,7 +1,7 @@
 // Home, Inspections and Actions — the three main tabs.
 import {
   esc, icon, api, statusBadge, scoreBadge, modeLabel, progressBar, relDay, dueText, daysUntil, skeleton, emptyState,
-  errorState, chips, searchBar, LOW_SCORE, fmtDateTime, viewer,
+  errorState, chips, searchBar, LOW_SCORE, fmtDateTime, viewer, put, post, toast, sheet, confirmSheet,
 } from './ui.js?v=__V__';
 import { fetchMine, sync } from './inspect.js?v=__V__';
 import { itemPhotosHtml, bindActionToggles } from './review.js?v=__V__';
@@ -180,5 +180,38 @@ export function listViews({ shell, me }) {
     });
   }
 
-  return { home, inspections, actions, action, syncState: () => sync };
+  // ── prospects: businesses inspected with a quick inspection, before they are clients ──
+  async function prospects() {
+    const view = shell({ title: 'Prospects', subtitle: 'Potential clients from quick inspections', back: '#/more', tab: 'more', body: skeleton(3) });
+    let list;
+    try { list = await api('/prospects'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = prospects; return; }
+    const admin = me().role === 'admin';
+    view.innerHTML = list.length ? `<div class="stack">${list.map((p) => `<section class="card">
+        <div class="row-between"><h3>${esc(p.name)}</h3><button class="btn sm" data-edit="${p.id}">${icon('pen')} ${p.name === 'New prospect' ? 'Add name' : 'Edit'}</button></div>
+        <p class="small muted">${[p.contact_name, p.phone, p.email, p.address].filter(Boolean).map(esc).join(' · ') || 'No details yet'}</p>
+        <div class="list-card">${p.inspections.map((i) => `<a class="row-link" href="#/inspections/${i.id}">
+          <span class="row-main"><strong>${esc(title(i))}</strong><small>${esc(relDay(i.started_at))} · ${esc(i.inspector_name)}</small></span>${statusBadge(i.status)}${icon('chevron', 'row-chev')}</a>`).join('')}</div>
+        ${admin ? `<button class="btn sm block" data-convert="${p.id}" style="margin-top:10px">${icon('building')} Make a client</button>` : ''}
+      </section>`).join('')}</div>`
+      : emptyState({ icon: 'sparkle', title: 'No prospects yet', text: 'Start a quick inspection to inspect a business that is not a client yet.',
+          action: '<a class="btn primary" href="#/quick">Quick inspection</a>' });
+    view.addEventListener('click', async (e) => {
+      const edit = e.target.closest('[data-edit]'), conv = e.target.closest('[data-convert]');
+      if (edit) {
+        const p = list.find((x) => x.id === edit.dataset.edit);
+        const ok = await sheet({ title: 'Prospect details', submitLabel: 'Save', fields: [
+          { name: 'name', label: 'Business name', value: p.name === 'New prospect' ? '' : p.name, required: true },
+          { name: 'contact_name', label: 'Contact name', value: p.contact_name }, { name: 'phone', label: 'Phone', type: 'tel', value: p.phone },
+          { name: 'email', label: 'Email', type: 'email', value: p.email }, { name: 'address', label: 'Address', type: 'textarea', value: p.address },
+        ], onSubmit: (v) => put(`/prospects/${p.id}`, v) });
+        if (ok) { toast('Saved'); prospects(); }
+      } else if (conv) {
+        const p = list.find((x) => x.id === conv.dataset.convert);
+        if (!(await confirmSheet(`Make ${p.name} a client?`, { text: 'It moves to Clients & sites, where you can add checklists for its site.', okLabel: 'Make a client', danger: false }))) return;
+        try { await post(`/prospects/${p.id}/convert`); toast('Now a client'); location.hash = `#/clients/${p.id}`; } catch (err) { toast(err.message, { error: true }); }
+      }
+    });
+  }
+
+  return { home, inspections, actions, action, prospects, syncState: () => sync };
 }

@@ -100,7 +100,7 @@ export const statusBadge = (status, { sending = false } = {}) => {
 export const LOW_SCORE = 7;
 export const scoreWord = (n) => !n ? '' : n <= 3 ? 'Poor' : n <= 6 ? 'Needs work' : n <= 8 ? 'Good' : 'Excellent';
 export const scoreBadge = (n) => n ? `<span class="score ${n < LOW_SCORE ? 'low' : ''}">${Number(n) % 1 ? Number(n).toFixed(1) : n}<small>/10</small></span>` : '';
-export const modeLabel = (insp) => insp.mode === 'check' ? 'Quality check' : insp.template_id ? 'Before & after' : 'Before & after · no checklist';
+export const modeLabel = (insp) => insp.mode === 'check' ? (insp.template_id ? 'Quality check' : 'Quality check · no checklist') : insp.template_id ? 'Before & after' : 'Before & after · no checklist';
 
 // ── progress ────────────────────────────────────────────
 export const pct = (done, total) => (total ? Math.round((done / total) * 100) : 0);

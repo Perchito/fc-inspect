@@ -29,6 +29,7 @@ outbox.onChange(() => { const el = document.getElementById('sync-pill'); if (el)
 const TABS = [['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'], ['more', '#/more', 'more', 'More']];
 const SIDE = () => [
   ['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'],
+  ['prospects', '#/prospects', 'sparkle', 'Prospects'],
   ...(isAdmin() ? [['clients', '#/clients', 'building', 'Clients'], ['templates', '#/templates', 'template', 'Templates'], ['users', '#/users', 'users', 'Team']] : []),
   ['sync', '#/sync', 'sync', 'Sync'], ['more', '#/more', 'more', 'More'],
 ];
@@ -114,6 +115,9 @@ function more() {
       ${row({ href: '#/clients', ic: 'building', title: 'Clients & sites', sub: 'Who you clean for and where' })}
       ${row({ href: '#/templates', ic: 'template', title: 'Templates', sub: 'Inspection checklists' })}
       ${row({ href: '#/users', ic: 'users', title: 'Team', sub: 'Admins and supervisors' })}</div>` : ''}
+    <h3 class="section-h">Prospects</h3><div class="list-card">
+      ${row({ href: '#/prospects', ic: 'sparkle', title: 'Prospects', sub: 'Potential clients from quick inspections' })}
+      ${row({ href: '#/quick', ic: 'plus', title: 'Quick inspection', sub: 'No site needed — name the business now or later' })}</div>
     <h3 class="section-h">App</h3><div class="list-card">
       ${row({ href: '#/sync', ic: 'sync', title: 'Offline & sync', sub: syncInfo().text })}
       ${row({ href: '#/about', ic: 'info', title: 'About FC Inspect', sub: 'Version, notifications, help' })}</div>
@@ -190,6 +194,8 @@ async function inspectionRoute(id, sub, n) {
 const UUID = '([0-9a-f-]{36})';
 const ROUTES = () => [
   [/^#\/home$/, () => lists.home()],
+  [/^#\/quick$/, () => insp.quick()],
+  [/^#\/prospects$/, () => lists.prospects()],
   [/^#\/start(?:\/([0-9a-f-]{36}))?(?:\/([\w.-]+))?$/, (site, choice) => insp.start(site, choice)],
   [new RegExp(`^#/inspections/${UUID}(?:/(item|review|sign|done)(?:/(\\d+))?)?$`), inspectionRoute],
   [/^#\/inspections$/, (q) => lists.inspections(q)],

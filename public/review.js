@@ -73,6 +73,7 @@ export function reportViews({ shell, me }) {
           ${low ? `<dt>Issues</dt><dd><span class="badge red">${low} below ${LOW_SCORE}/10</span></dd>` : ''}
           ${insp.approved_at ? `<dt>Approved</dt><dd>${esc(fmtDateTime(insp.approved_at))} by ${esc(insp.approved_by_name)}</dd>` : ''}
           ${ba ? '<dt>Visibility</dt><dd>Internal</dd>' : ''}
+          ${insp.client_prospect ? `<dt>Prospect</dt><dd><a href="#/prospects">${insp.client_name === 'New prospect' ? 'Add the business name' : 'Edit business details'}</a></dd>` : ''}
         </dl>
       </section>
       ${editing ? '<p class="note-box">You can tidy up notes and delete photos before approving.</p>' : ''}

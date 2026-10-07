@@ -217,7 +217,7 @@ export async function allPhotos(insp) {
   return [...insp.photos.map((p) => ({ ...p, src: `/api/photos/${p.id}` })), ...local];
 }
 export const editable = (insp) => ['draft', 'returned'].includes(insp.status) && !insp.submitting;
-const isFree = (insp) => insp.mode === 'before_after' && !insp.template_id;
+const isFree = (insp) => !insp.template_id; // no checklist: items are added as you go
 const itemTitle = (insp) => (insp.template_id ? insp.template_name : modeLabel(insp));
 
 // ── screens ─────────────────────────────────────────────
@@ -261,7 +261,9 @@ export function inspectViews({ shell, me }) {
     watchGps();
     const steps = `<ol class="steps" aria-hidden="true">${[1, 2, 3].map((i) => `<li class="${i <= stepNo ? 'on' : ''}"></li>`).join('')}</ol>`;
     if (!siteId) {
-      view.innerHTML = `${steps}<h2 class="screen-h">Which site?</h2>${searchBar('Search sites or clients')}<div class="stack" id="sites"></div>`;
+      view.innerHTML = `${steps}<a class="card tap media" href="#/quick"><span class="card-ic teal">${icon('sparkle')}</span>
+          <span class="grow"><strong>Quick inspection</strong><small>New prospect — no site needed, name it now or later</small></span>${icon('chevron', 'chev')}</a>
+        <h2 class="screen-h">Which site?</h2>${searchBar('Search sites or clients')}<div class="stack" id="sites"></div>`;
       const $q = view.querySelector('input'), $list = view.querySelector('#sites');
       const render = () => {
         const q = $q.value.trim().toLowerCase();
@@ -319,6 +321,33 @@ export function inspectViews({ shell, me }) {
     };
   }
 
+  // ── quick inspection: no site. The server saves the business as a prospect, named now or later ──
+  async function quick() {
+    watchGps();
+    const view = shell({ title: 'Quick inspection', subtitle: 'New prospect', back: '#/start', focus: true, body: `
+      <p class="muted">No site needed. It is saved under <strong>Prospects</strong>, where you can add the business details later.</p>
+      <label class="field"><span>Business name <em>(optional)</em></span><input id="q-name" maxlength="200" autocomplete="off" placeholder="e.g. Joe's Café — or leave blank"></label>
+      <fieldset class="choice"><legend>Type</legend>
+        <label class="chip-radio"><input type="radio" name="q-mode" value="check" checked><span>Quality check · score each item</span></label>
+        <label class="chip-radio"><input type="radio" name="q-mode" value="before_after"><span>Before &amp; after photos</span></label>
+      </fieldset>
+      <p class="muted small">No checklist: add each item as you go.</p>
+      <p class="muted small center-text">${icon('pin', 'inline')} Your location is recorded when you start and finish.</p>
+      <div class="bottom-bar"><button class="btn primary block lg" id="go">Start quick inspection</button></div>` });
+    view.querySelector('#go').onclick = async (e) => {
+      e.currentTarget.disabled = true; e.currentTarget.textContent = 'Starting…';
+      const id = crypto.randomUUID(), started_at = new Date().toISOString();
+      const name = view.querySelector('#q-name').value.trim().slice(0, 200), mode = view.querySelector('[name=q-mode]:checked').value;
+      const start_gps = await currentGps(6000);
+      await outbox.put({ id: `start:${id}`, inspectionId: id, kind: 'start', method: 'POST', url: '/api/inspections', contentType: 'application/json',
+        body: JSON.stringify({ id, quick: { name }, template_id: null, mode, start_gps, started_at }),
+        local: { mode, template_id: null, template_name: 'No checklist', site_name: name || 'New prospect', site_address: null,
+          client_name: name || 'New prospect', started_at, inspector_name: me().name, inspector_id: me().id, items: [] } });
+      current = null;
+      location.hash = base(id);
+    };
+  }
+
   // ── inspection overview (its owner, while it can still be changed) ──
   async function detail(insp) {
     const id = insp.id;
@@ -332,6 +361,7 @@ export function inspectViews({ shell, me }) {
         <div class="row-between">${statusBadge(insp.status)}<span class="muted small">${esc(modeLabel(insp))}</span></div>
         <h2>${esc(insp.site_name)}</h2>
         <p class="muted">${esc(insp.client_name)} · started ${esc(relDay(insp.started_at))}</p>
+        ${insp.client_prospect ? `<p class="small"><a href="#/prospects">${icon('pen', 'inline')} ${insp.client_name === 'New prospect' ? 'Add the business name' : 'Edit business details'}</a></p>` : ''}
         ${total ? progressBar(done, total) : ''}
       </section>
       ${insp.local ? '' : `<section class="card${insp.status === 'returned' ? ' warn-card' : ''}"><h3>${insp.status === 'returned' ? `${icon('alert')} ` : ''}Comments</h3>
@@ -652,5 +682,5 @@ export function inspectViews({ shell, me }) {
     current = null;
   }
 
-  return { start, detail, item, review, sign, done, addItem };
+  return { start, quick, detail, item, review, sign, done, addItem };
 }

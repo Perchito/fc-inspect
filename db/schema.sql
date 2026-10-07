@@ -142,3 +142,6 @@ alter table inspection_items add column if not exists added boolean not null def
 
 -- items can be grouped under an area (template item {area: 'Kitchen'}), numbered 1.1, 1.2…
 alter table inspection_items add column if not exists area text not null default '';
+
+-- prospects: a client created by a quick inspection (no site picked); named later, then made a real client
+alter table clients add column if not exists prospect boolean not null default false;
