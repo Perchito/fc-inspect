@@ -2,7 +2,7 @@
 // action plans, before & after), review, sign, submit. Every change goes through an IndexedDB outbox
 // so a dropped signal never loses work — including starting an inspection with no signal at all.
 import {
-  esc, icon, api, del, toast, sheet, confirmSheet, viewer, skeleton, emptyState, errorState, statusBadge,
+  esc, icon, api, post, del, toast, sheet, confirmSheet, viewer, skeleton, emptyState, errorState, statusBadge,
   scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar, itemNums, areaHead,
 } from './ui.js?v=__V__';
 
@@ -334,8 +334,10 @@ export function inspectViews({ shell, me }) {
         <p class="muted">${esc(insp.client_name)} · started ${esc(relDay(insp.started_at))}</p>
         ${total ? progressBar(done, total) : ''}
       </section>
-      ${insp.comments?.length ? `<section class="card warn-card"><h3>${icon('alert')} Sent back by the office</h3>${insp.comments.map((c) =>
-        `<p><strong>${esc(c.name)}:</strong> ${esc(c.body)}</p>`).join('')}</section>` : ''}
+      ${insp.local ? '' : `<section class="card${insp.status === 'returned' ? ' warn-card' : ''}"><h3>${insp.status === 'returned' ? `${icon('alert')} ` : ''}Comments</h3>
+        ${(insp.comments || []).map((c) => `<p><strong>${esc(c.name)}</strong> <span class="muted small">${esc(relDay(c.created_at))}</span><br>${esc(c.body).replace(/\n/g, '<br>')}</p>`).join('') || '<p class="muted small">No comments yet.</p>'}
+        <label class="field"><span>Add a comment</span><textarea id="comment-body" rows="2" maxlength="2000" placeholder="Write a comment"></textarea></label>
+        <button class="btn sm primary" id="comment-post">Post comment</button></section>`}
       ${insp.mode === 'before_after' && total ? '<p class="note-box">Take the before photos now. Leave this inspection open during the clean, then come back and add an after photo next to each one.</p>' : ''}
       ${total ? `<h3 class="section-h">Items</h3><div class="stack">${insp.items.map((it, n) => {
         const count = photos.filter((p) => p.item_key === it.item_key).length;
@@ -351,6 +353,16 @@ export function inspectViews({ shell, me }) {
         ? `<a class="btn primary block lg" href="${base(id)}/item/${nextTodo + 1}">${done ? 'Continue' : 'Start'} · item ${nextTodo + 1} of ${total} ${icon('chevron')}</a>`
         : `<a class="btn primary block lg" href="${base(id)}/review">Review &amp; submit ${icon('chevron')}</a>`}</div>` : ''}` });
     view.querySelector('#add-item').onclick = () => addItem(insp, { first: !total });
+    view.querySelector('#comment-post')?.addEventListener('click', async (e) => {
+      const ta = view.querySelector('#comment-body'), body = ta.value.trim();
+      if (!body) { ta.focus(); return; }
+      e.currentTarget.disabled = true;
+      try {
+        const c = await post(`/inspections/${id}/comments`, { body });
+        insp.comments = [...(insp.comments || []), { ...c, body, name: me().name }];
+        toast('Comment posted'); detail(insp);
+      } catch (err) { toast(err.offline ? 'Posting a comment needs a connection.' : err.message, { error: true }); e.currentTarget.disabled = false; }
+    });
     view.querySelector('#discard')?.addEventListener('click', async () => {
       if (!(await confirmSheet('Discard this inspection?', { text: 'All its photos and notes are deleted. This cannot be undone.', okLabel: 'Discard' }))) return;
       const pending = (await outbox.all()).filter((e) => e.inspectionId === id);

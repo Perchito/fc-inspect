@@ -55,7 +55,8 @@ export function reportViews({ shell, me }) {
   async function report(insp, reload) {
     const admin = me().role === 'admin';
     const id = insp.id, editing = admin && insp.status === 'submitted', ba = insp.mode === 'before_after';
-    const internal = insp.comments.filter((c) => c.audience !== 'client');
+    const canComment = me().role !== 'cleaner';
+    const PARTS = [['scores', 'Scores'], ['notes', 'Notes'], ['actions', 'Urgent action plans'], ['photos', 'Photos'], ['comments', 'Comments']];
     const score = avg(insp.items), low = insp.items.filter((it) => it.score && it.score < LOW_SCORE).length;
     const maps = (g) => g ? `<a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" rel="noopener">${icon('pin', 'inline')} Map</a> <span class="muted small">±${g.accuracy ?? '?'} m</span>` : '<span class="muted">not recorded</span>';
     const nums = itemNums(insp.items);
@@ -74,8 +75,6 @@ export function reportViews({ shell, me }) {
           ${ba ? '<dt>Visibility</dt><dd>Internal</dd>' : ''}
         </dl>
       </section>
-      ${internal.length ? `<section class="card warn-card"><h3>Notes to the supervisor</h3>${internal.map((c) =>
-        `<p><strong>${esc(c.name)}</strong> <span class="muted small">${esc(relDay(c.created_at))}</span><br>${esc(c.body)}</p>`).join('')}</section>` : ''}
       ${editing ? '<p class="note-box">You can tidy up notes and delete photos before approving.</p>' : ''}
       ${insp.items.map((it, n) => `${areaHead(insp.items, nums, n)}
         <section class="card report-item">
@@ -87,17 +86,37 @@ export function reportViews({ shell, me }) {
         </section>`).join('')}
       ${insp.inspector_sig ? `<section class="card"><h3>Supervisor signature</h3><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}">
         <p class="small muted">${esc(insp.inspector_name)} · ${esc(fmtDateTime(insp.finished_at))}</p></section>` : ''}
+      ${insp.comments.length || canComment ? `<section class="card" id="comments"><h3>Comments</h3>
+        ${insp.comments.map((c) => `<p><strong>${esc(c.name)}</strong> <span class="muted small">${esc(relDay(c.created_at))}</span><br>${esc(c.body).replace(/\n/g, '<br>')}</p>`).join('') || '<p class="muted small">No comments yet.</p>'}
+        ${canComment ? `<label class="field"><span>Add a comment</span><textarea id="comment-body" rows="2" maxlength="2000" placeholder="Write a comment"></textarea></label>
+          <button class="btn sm primary" id="comment-post">Post comment</button>` : ''}
+      </section>` : ''}
       <section class="card"><h3>PDF report</h3>
-        ${[['', 'With notes', 'Scores, photos and the supervisor’s notes'], ['notes=0&', 'Without notes', 'Scores and photos only — e.g. to send to the client']].map(([q, title, sub]) => `
-        <div class="pdf-opt"><div><strong>${title}</strong><small>${sub}</small></div>
-          <div class="btn-row"><a class="btn sm" href="/api/inspections/${id}/pdf${q ? `?${q.slice(0, -1)}` : ''}" target="_blank" rel="noopener">${icon('file')} View</a>
-            <a class="btn sm" data-download href="/api/inspections/${id}/pdf?${q}download=1">${icon('down')} Download</a></div></div>`).join('')}
+        <p class="muted small">Choose what goes in the PDF.</p>
+        <div id="pdf-parts" style="display:flex;flex-direction:column">${PARTS.map(([k, label]) => `<label class="switch"><input type="checkbox" data-part="${k}" checked><span>${label}</span></label>`).join('')}</div>
+        <div class="btn-row" style="margin-top:12px"><a class="btn" id="pdf-view" href="/api/inspections/${id}/pdf" target="_blank" rel="noopener">${icon('file')} View PDF</a>
+          <a class="btn" id="pdf-down" href="/api/inspections/${id}/pdf?download=1">${icon('down')} Download</a></div>
       </section>
       ${admin && insp.status === 'approved' && !insp.client_signed_at ? '<button class="btn ghost-danger block" id="unapprove">Move back to “To review”</button>' : ''}
       ${editing ? `<div class="bottom-bar two"><button class="btn lg" id="return">Send back</button>
         <button class="btn primary lg" id="approve">${icon('check')} Approve</button></div>` : ''}` });
 
-    view.querySelectorAll('[data-download]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); savePdf(e.currentTarget.href); }));
+    // PDF links follow the switches: each part switched off is sent as part=0
+    const pdfQuery = () => [...view.querySelectorAll('[data-part]')].filter((c) => !c.checked).map((c) => `${c.dataset.part}=0`);
+    const syncPdf = () => {
+      const q = pdfQuery();
+      view.querySelector('#pdf-view').href = `/api/inspections/${id}/pdf${q.length ? `?${q.join('&')}` : ''}`;
+      view.querySelector('#pdf-down').href = `/api/inspections/${id}/pdf?${[...q, 'download=1'].join('&')}`;
+    };
+    view.querySelector('#pdf-parts').addEventListener('change', syncPdf);
+    view.querySelector('#pdf-down').addEventListener('click', (e) => { e.preventDefault(); savePdf(e.currentTarget.href); });
+    view.querySelector('#comment-post')?.addEventListener('click', async (e) => {
+      const ta = view.querySelector('#comment-body'), body = ta.value.trim();
+      if (!body) { ta.focus(); return; }
+      e.currentTarget.disabled = true;
+      try { await post(`/inspections/${id}/comments`, { body }); toast('Comment posted'); reload(); }
+      catch (err) { toast(err.message, { error: true }); e.currentTarget.disabled = false; }
+    });
 
     view.querySelectorAll('[data-photos]').forEach((box) => box.addEventListener('click', (e) => {
       const b = e.target.closest('[data-view]'); if (!b) return;
