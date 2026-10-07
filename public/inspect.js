@@ -147,11 +147,11 @@ export function itemState(insp, it, photos) {
   }
   const befores = ps.filter((p) => p.phase !== 'after');
   if (!befores.length) return 'todo';
-  return befores.some((b) => !ps.some((a) => a.phase === 'after' && a.pair_id === b.id)) ? 'after' : 'done';
+  if (befores.some((b) => !ps.some((a) => a.phase === 'after' && a.pair_id === b.id))) return 'after';
+  return it.score && it.score < LOW_SCORE && !planDone(it) ? 'plan' : 'done'; // score optional here
 }
 const STATE_LABEL = { todo: 'Not started', score: 'Needs a score', plan: 'Action plan needed', after: 'After photo pending', done: 'Done' };
-export const itemProblem = (it, mode) => mode !== 'check' ? ''
-  : !it.score ? 'Give this item a score before moving on.'
+export const itemProblem = (it, mode) => !it.score ? (mode === 'check' ? 'Give this item a score before moving on.' : '')
   : it.score < LOW_SCORE && !planDone(it) ? 'Scores below 7 need an action plan: what, who and a deadline.' : '';
 export const avgScore = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
 const randomKey = () => [...crypto.getRandomValues(new Uint8Array(5))].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -383,7 +383,7 @@ export function inspectViews({ shell, me }) {
           <label class="btn primary lg grow">${icon('camera')} ${ba ? 'Before photo' : 'Take photo'}<input type="file" accept="image/*" capture="environment" hidden data-add></label>
           <label class="btn lg">${icon('image')} Gallery<input type="file" accept="image/*" multiple hidden data-add></label>
         </div></section>
-      ${ba ? '' : `<section class="block-section"><h3>Score</h3>
+      ${`<section class="block-section"><h3>Score${ba ? ' <span class="muted small">(optional)</span>' : ''}</h3>
         <div class="score-grid" role="radiogroup" aria-label="Score from 1 to 10">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
           `<button type="button" role="radio" data-score="${v}" class="${v < LOW_SCORE ? 'low' : ''}" aria-checked="${it.score === v}">${v}</button>`).join('')}</div>
         <p class="score-word" id="score-word" aria-live="polite"></p>
@@ -472,7 +472,7 @@ export function inspectViews({ shell, me }) {
 
     // note, score and action plan are saved together as one queued update per item
     let saveTimer, dirty = false;
-    const fields = () => ba ? { note: it.note } : { note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null };
+    const fields = () => ({ note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null });
     const saveItem = () => {
       clearTimeout(saveTimer);
       if (!dirty) return;
@@ -495,11 +495,11 @@ export function inspectViews({ shell, me }) {
     };
     renderNote(false);
 
-    // score + urgent action plan
-    if (!ba) {
+    // score + urgent action plan (optional on before & after, required on quality checks)
+    {
       const $word = view.querySelector('#score-word'), $plan = view.querySelector('#plan');
       const renderScore = () => {
-        $word.innerHTML = it.score ? `<strong>${it.score}</strong> · ${scoreWord(it.score)}` : 'Tap a score';
+        $word.innerHTML = it.score ? `<strong>${it.score}</strong> · ${scoreWord(it.score)}${ba ? ' <span class="muted small">(tap again to clear)</span>' : ''}` : 'Tap a score';
         $word.className = `score-word${it.score && it.score < LOW_SCORE ? ' low' : ''}`;
         if (!(it.score && it.score < LOW_SCORE)) { $plan.innerHTML = ''; return; }
         $plan.innerHTML = planDone(it)
@@ -524,8 +524,8 @@ export function inspectViews({ shell, me }) {
       };
       renderScore();
       view.querySelectorAll('[data-score]').forEach((b) => b.addEventListener('click', () => {
-        it.score = +b.dataset.score;
-        view.querySelectorAll('[data-score]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+        it.score = ba && it.score === +b.dataset.score ? null : +b.dataset.score; // optional score: tap again to clear
+        view.querySelectorAll('[data-score]').forEach((x) => x.setAttribute('aria-checked', String(+x.dataset.score === it.score)));
         changed(true); renderScore();
         navigator.vibrate?.(8);
       }));
@@ -578,7 +578,7 @@ export function inspectViews({ shell, me }) {
         ${avg ? stat('Overall score', `${avg}<small>/10</small>`, avg < LOW_SCORE ? 'bad' : 'good') : stat('Inspection', esc(modeLabel(insp)))}
         ${insp.mode === 'check' ? stat('Issues', low.length, low.length ? 'bad' : '') : stat('After photos due', afterPending, afterPending ? 'warn' : '')}
         ${stat('Photos', photos.length)}${stat('Notes', notes)}
-        ${insp.mode === 'check' ? stat('Actions', low.filter(planDone).length, low.length ? 'warn' : '') : ''}
+        ${insp.mode === 'check' || low.length ? stat('Actions', low.filter(planDone).length, low.length ? 'warn' : '') : ''}
       </div>
       ${problems.length ? `<section class="card warn-card"><h3>${icon('alert')} Before you can submit</h3><ul class="plain">${problems.map(([i, p]) =>
         `<li><a href="${base(id)}/item/${i + 1}"><strong>${esc(insp.items[i].label)}</strong> — ${esc(p)}</a></li>`).join('')}</ul></section>` : ''}
