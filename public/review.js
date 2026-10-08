@@ -99,6 +99,7 @@ export function reportViews({ shell, me }) {
           <a class="btn" id="pdf-down" href="/api/inspections/${id}/pdf?download=1">${icon('down')} Download</a></div>
       </section>
       ${admin && insp.status === 'approved' && !insp.client_signed_at ? '<button class="btn ghost-danger block" id="unapprove">Move back to “To review”</button>' : ''}
+      ${admin ? `<button class="btn ghost-danger block" id="delete-insp">${icon('trash')} Delete inspection</button>` : ''}
       ${editing ? `<div class="bottom-bar two"><button class="btn lg" id="return">Send back</button>
         <button class="btn primary lg" id="approve">${icon('check')} Approve</button></div>` : ''}` });
 
@@ -147,6 +148,10 @@ export function reportViews({ shell, me }) {
         onSubmit: (v) => post(`/admin/inspections/${id}/return`, v),
       });
       if (ok) { toast('Sent back'); location.hash = '#/inspections'; }
+    });
+    view.querySelector('#delete-insp')?.addEventListener('click', async () => {
+      if (!(await confirmSheet('Delete this inspection for good?', { text: `${insp.site_name} · ${modeLabel(insp)} · ${fmtDateTime(insp.started_at)}. Its items, photos, comments and PDF are removed. This can't be undone.`, okLabel: 'Delete for good' }))) return;
+      try { await del(`/admin/inspections/${id}`); toast('Inspection deleted'); location.hash = '#/inspections'; } catch (e) { toast(e.message, { error: true }); }
     });
     view.querySelector('#unapprove')?.addEventListener('click', async () => {
       if (!(await confirmSheet('Move back to “To review”?', { okLabel: 'Move back', danger: false }))) return;
