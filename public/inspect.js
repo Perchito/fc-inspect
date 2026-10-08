@@ -588,11 +588,18 @@ export function inspectViews({ shell, me }) {
               <p class="small">Scores below ${LOW_SCORE} need an action plan. The office is alerted when you submit.</p>
               <button class="btn danger-solid block" id="edit-plan">${icon('plus')} Create action</button></div>`;
         $plan.querySelector('#edit-plan').onclick = async () => {
+          // "Assigned to" = a staff member from Staff Hub (preferred names); remembered on the phone for no-signal sites
+          let staff = [];
+          try { staff = await api('/staff-names'); localStorage.setItem('fci-staff-names', JSON.stringify(staff)); }
+          catch { try { staff = JSON.parse(localStorage.getItem('fci-staff-names') || '[]'); } catch {} }
+          const who = staff.length ? { name: 'action_who', label: 'Assigned to', type: 'select', value: it.action_who || '', required: true,
+            options: [{ value: '', label: 'Choose someone…' }, ...(it.action_who && !staff.includes(it.action_who) ? [it.action_who] : []).concat(staff).map((n) => ({ value: n, label: n }))] }
+            : { name: 'action_who', label: 'Assigned to', value: it.action_who, required: true, placeholder: 'Name' };
           const v = await sheet({
             title: 'Urgent action', text: `${it.label} scored ${it.score}/10. How will it be put right?`, submitLabel: 'Save action',
             fields: [
               { name: 'action_what', label: 'What needs doing', type: 'textarea', value: it.action_what, required: true, placeholder: 'e.g. Re-clean behind the fryers and degrease the drain' },
-              { name: 'action_who', label: 'Assigned to', value: it.action_who, required: true, placeholder: 'Name' },
+              who,
               { name: 'action_due', label: 'Deadline', type: 'date', value: it.action_due || new Date(Date.now() + 86400000).toISOString().slice(0, 10), min: new Date().toISOString().slice(0, 10), required: true },
             ],
           });
