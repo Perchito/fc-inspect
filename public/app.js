@@ -134,6 +134,7 @@ function more() {
       ${row({ href: '#/prospects', ic: 'sparkle', title: 'Prospects', sub: 'Potential clients from quick inspections' })}
       ${row({ href: '#/quick', ic: 'plus', title: 'Quick inspection', sub: 'No site needed — name the business now or later' })}</div>
     <h3 class="section-h">App</h3><div class="list-card">
+      ${row({ href: '#/notify-settings', ic: 'bell', title: 'Notification settings', sub: 'Phone alerts, what to get, email' })}
       ${row({ href: '#/sync', ic: 'sync', title: 'Offline & sync', sub: syncInfo().text })}
       ${row({ href: '#/about', ic: 'info', title: 'About FC Inspect', sub: 'Version, notifications, help' })}</div>
     ${standalone ? '' : `<div class="note-box"><strong>${icon('sparkle', 'inline')} Install the app</strong>
@@ -212,7 +213,7 @@ const UUID = '([0-9a-f-]{36})';
 const ROUTES = () => [
   [/^#\/home$/, () => lists.home()],
   [/^#\/my-actions$/, () => lists.myActions()], [new RegExp(`^#/my-actions/${UUID}/([^/]+)$`), (i, k) => lists.myAction(i, decodeURIComponent(k))],
-  [/^#\/notifications$/, () => lists.notifications(refreshUnread)],
+  [/^#\/notifications$/, () => lists.notifications(refreshUnread)], [/^#\/notify-settings$/, () => lists.notifySettings()],
   [/^#\/quick$/, () => insp.quick()],
   [/^#\/prospects$/, () => lists.prospects()],
   [/^#\/start(?:\/([0-9a-f-]{36}))?(?:\/([\w.-]+))?$/, (site, choice) => insp.start(site, choice)],

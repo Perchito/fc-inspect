@@ -5,6 +5,20 @@ import {
 } from './ui.js?v=__V__';
 import { fetchMine, sync, shrink } from './inspect.js?v=__V__';
 import { itemPhotosHtml, bindActionToggles } from './review.js?v=__V__';
+import { needsInstall, pushState, enablePush, disablePush } from './push.js?v=__V__';
+
+// notification categories people can switch off
+const NOTIFY_CATS = [['actions', 'Actions assigned to me', 'Urgent fixes for you to do'], ['reminders', 'Overdue reminders', 'Actions past their deadline'],
+  ['inspections', 'Inspections', 'Submitted, signed off by the client, new comments'], ['updates', 'Updates', 'Actions marked as done']];
+// "Get alerts on this phone" card, filled in after the screen renders (only when push is possible but off)
+async function pushPromptInto(el) {
+  if (!el) return;
+  const st = await pushState().catch(() => 'unsupported');
+  if (st === 'off' || (st === 'unsupported' && needsInstall())) {
+    el.innerHTML = `<a class="card tap media" href="#/notify-settings"><span class="card-ic">${icon('bell')}</span>
+      <span class="grow"><strong>Get alerts on this phone</strong><small>New actions, reminders and updates — even when the app is closed</small></span>${icon('chevron', 'chev')}</a>`;
+  }
+}
 
 const title = (i) => (i.template_id ? i.template_name : modeLabel(i));
 const open = (i) => ['draft', 'returned'].includes(i.status) && !i.sending;
@@ -68,7 +82,7 @@ export function listViews({ shell, me }) {
     const cont = mine.filter(open).sort((a, b) => (b.status === 'returned') - (a.status === 'returned') || new Date(b.started_at) - new Date(a.started_at));
     const recent = (isAdmin() ? [...review] : mine.filter((i) => !open(i))).slice(0, 4);
     const urgent = actions.slice(0, 3);
-    view.innerHTML = `
+    view.innerHTML = `<div id="push-prompt"></div>
       <a class="hero-cta" href="#/start">
         <span class="hero-ic">${icon('plus')}</span>
         <span><strong>Start inspection</strong><small>Quality Check or Before &amp; After</small></span>
@@ -89,6 +103,7 @@ export function listViews({ shell, me }) {
       <div class="row-between section-h"><h3>${isAdmin() ? 'Waiting for review' : 'Recent inspections'}</h3>${recent.length ? '<a class="link" href="#/inspections">See all</a>' : ''}</div>
       ${recent.length ? `<div class="card-grid">${recent.map((i) => inspectionCard(i, { admin: isAdmin(), meId: me().id })).join('')}</div>`
         : emptyState({ icon: 'list', title: isAdmin() ? 'Nothing to review' : 'No inspections yet', text: isAdmin() ? 'Submitted inspections appear here.' : 'Start your first inspection to see it here.' })}`;
+    pushPromptInto(view.querySelector('#push-prompt'));
   }
 
   // ── Inspections ──
@@ -217,12 +232,13 @@ export function listViews({ shell, me }) {
 
   // ── notifications (everyone) ──
   async function notifications(refreshUnread) {
-    const view = shell({ title: 'Notifications', tab: 'alerts', body: skeleton(3) });
+    const view = shell({ title: 'Notifications', tab: 'alerts', body: skeleton(3), action: { href: '#/notify-settings', icon: 'settings', label: 'Notification settings' } });
     let list;
     try { list = await api('/notifications'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = () => notifications(refreshUnread); return; }
-    view.innerHTML = list.length ? `<div class="list-card">${list.map((n) => `<a class="notif ${n.read_at ? '' : 'unread'}" href="${esc(n.link || '#/notifications')}">
+    view.innerHTML = `<div id="push-prompt"></div>` + (list.length ? `<div class="list-card">${list.map((n) => `<a class="notif ${n.read_at ? '' : 'unread'}" href="${esc(n.link || '#/notifications')}">
         <span class="grow"><strong>${esc(n.title)}</strong>${n.body ? `<p>${esc(n.body)}</p>` : ''}<small>${esc(relDay(n.created_at))}</small></span></a>`).join('')}</div>`
-      : emptyState({ icon: 'bell', title: 'No notifications yet', text: 'New actions assigned to you, reminders and updates show here.' });
+      : emptyState({ icon: 'bell', title: 'No notifications yet', text: 'New actions assigned to you, reminders and updates show here.' }));
+    pushPromptInto(view.querySelector('#push-prompt'));
     if (list.some((n) => !n.read_at)) await post('/notifications/read').then(refreshUnread).catch(() => {});
   }
 
@@ -286,5 +302,41 @@ export function listViews({ shell, me }) {
     });
   }
 
-  return { home, inspections, actions, action, prospects, notifications, myActions, myAction, syncState: () => sync };
+  // ── notification settings: pop-ups on this phone, categories, email ──
+  async function notifySettings() {
+    const view = shell({ title: 'Notification settings', back: '#/notifications', tab: 'alerts', body: skeleton(2) });
+    let s;
+    try { s = await api('/me/notification-settings'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = notifySettings; return; }
+    const st = await pushState().catch(() => 'unsupported');
+    const phone = {
+      on: `<p><span class="badge green">${icon('check')} On</span> Alerts pop up on this phone, even when the app is closed.</p>
+        <div class="btn-row"><button class="btn" id="p-test">Send a test</button><button class="btn ghost-danger" id="p-off">Turn off on this phone</button></div>`,
+      off: `<p class="muted">Get an alert on this phone for new actions, reminders and updates — even when the app is closed.</p>
+        <button class="btn primary block" id="p-on">${icon('bell')} Turn on notifications</button>`,
+      blocked: '<p class="note-box">Notifications are blocked for this app. Turn them on in your phone\'s Settings → Notifications, then come back here.</p>',
+      unsupported: needsInstall() ? '<p class="note-box"><strong>On iPhone, add FC Inspect to your Home Screen first:</strong> tap Share → Add to Home Screen, then open it from the new icon and come back here.</p>'
+        : '<p class="note-box">This browser can\'t show notifications. Try the app from your phone\'s Home Screen.</p>',
+    }[st];
+    view.innerHTML = `<section class="card"><h3>This phone</h3>${phone}${s.phones > (st === 'on' ? 1 : 0) ? `<p class="small muted">Also on ${s.phones - (st === 'on' ? 1 : 0)} other device(s).</p>` : ''}</section>
+      <h3 class="section-h">What to get</h3>
+      <div class="list-card">${NOTIFY_CATS.map(([k, title, sub]) => `<label class="switch row-switch"><span class="grow"><strong>${title}</strong><small>${sub}</small></span>
+        <input type="checkbox" data-cat="${k}" ${s.muted.includes(k) ? '' : 'checked'}></label>`).join('')}</div>
+      <p class="small muted">Switched-off ones still show in the Notifications list — just no pop-up or email.</p>
+      <div class="list-card"><label class="switch row-switch"><span class="grow"><strong>Email me important ones</strong><small>New actions assigned to you; inspections (admins)</small></span>
+        <input type="checkbox" id="email" ${s.email ? 'checked' : ''}></label></div>`;
+    const save = () => put('/me/notification-settings', { muted: [...view.querySelectorAll('[data-cat]')].filter((c) => !c.checked).map((c) => c.dataset.cat), email: view.querySelector('#email').checked })
+      .then(() => toast('Saved')).catch((e) => toast(e.message, { error: true }));
+    view.querySelectorAll('input[type=checkbox]').forEach((c) => c.addEventListener('change', save));
+    view.querySelector('#p-on')?.addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try { await enablePush({ api, post }); toast('Notifications are on'); notifySettings(); } catch (err) { toast(err.message, { error: true }); e.currentTarget.disabled = false; }
+    });
+    view.querySelector('#p-off')?.addEventListener('click', async () => { await disablePush({ post }); toast('Turned off on this phone'); notifySettings(); });
+    view.querySelector('#p-test')?.addEventListener('click', async () => {
+      const r = await post('/push/test').catch(() => ({ sent: 0 }));
+      toast(r.sent ? 'Test sent — check your notifications' : 'Could not reach this phone — try turning it off and on again', { error: !r.sent });
+    });
+  }
+
+  return { home, inspections, actions, action, prospects, notifications, notifySettings, myActions, myAction, syncState: () => sync };
 }

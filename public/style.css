@@ -451,3 +451,8 @@ body:has(.app.focus) .toast { bottom: calc(96px + var(--safe-b)); }
 .notif.unread strong::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); margin-right: 8px; vertical-align: middle; }
 .notif p { margin: 2px 0; font-size: 15px; color: var(--muted); }
 .notif small { color: var(--faint); font-size: 13px; }
+
+.row-switch { display: flex; align-items: center; gap: var(--s3); padding: 12px var(--s4); width: 100%; }
+.row-switch + .row-switch { border-top: 1px solid var(--line); }
+.row-switch .grow strong { display: block; font-size: 16px; }
+.row-switch .grow small { display: block; color: var(--muted); font-size: 13px; }

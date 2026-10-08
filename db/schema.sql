@@ -173,3 +173,20 @@ create table if not exists notifications (
   read_at    timestamptz
 );
 create index if not exists notifications_user_idx on notifications (user_id, created_at desc);
+
+-- phone pop-up notifications (Web Push): one row per phone that turned them on
+create table if not exists push_subscriptions (
+  endpoint   text primary key,
+  user_id    uuid not null references users(id) on delete cascade,
+  p256dh     text not null,
+  auth       text not null,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_user_idx on push_subscriptions (user_id);
+-- each person's choices: categories switched off (no pop-up, no email) and whether important things are emailed
+create table if not exists notification_prefs (
+  user_id uuid primary key references users(id) on delete cascade,
+  muted   text[] not null default '{}',
+  email   boolean not null default true
+);
