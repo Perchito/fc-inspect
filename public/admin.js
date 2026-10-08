@@ -279,5 +279,29 @@ export function adminViews({ shell, me, setLeaveGuard }) {
     });
   }
 
-  return { clients, client, templates, template, users };
+  // ── recently deleted: restore, or remove for good (otherwise purged 30 days after deleting) ──
+  async function deleted() {
+    const view = shell({ title: 'Recently deleted', subtitle: 'Kept for 30 days, then removed for good', back: '#/more', tab: 'more', body: skeleton(3) });
+    let list;
+    try { list = await api('/admin/deleted'); } catch (e) { return fail(view, e, deleted); }
+    const left = (d) => Math.max(0, 30 - Math.floor((Date.now() - new Date(d)) / 86400000));
+    view.innerHTML = list.length ? `<div class="stack">${list.map((i) => `<section class="card">
+        <div class="row-between"><strong>${esc(i.site_name)}</strong>${statusBadge(i.status)}</div>
+        <p class="small muted">${esc(i.client_name)} · ${esc(i.template_id ? i.template_name : modeLabel(i))} · ${esc(i.inspector_name)} · ${i.photo_count} photo${i.photo_count === 1 ? '' : 's'}</p>
+        <p class="small">Deleted ${esc(relDay(i.deleted_at))}${i.deleted_by_name ? ` by ${esc(i.deleted_by_name)}` : ''} · <strong>removed for good in ${left(i.deleted_at)} day${left(i.deleted_at) === 1 ? '' : 's'}</strong></p>
+        <div class="btn-row"><button class="btn sm" data-restore="${i.id}">${icon('back')} Restore</button><button class="btn sm ghost-danger" data-purge="${i.id}">${icon('trash')} Delete permanently</button></div>
+      </section>`).join('')}</div>`
+      : emptyState({ icon: 'trash', title: 'Nothing here', text: 'Deleted inspections stay here for 30 days.' });
+    view.addEventListener('click', async (e) => {
+      const r = e.target.closest('[data-restore]'), p = e.target.closest('[data-purge]');
+      try {
+        if (r) { await post(`/admin/deleted/${r.dataset.restore}/restore`); toast('Restored'); deleted(); }
+        if (p && await confirmSheet('Delete permanently?', { text: 'The inspection, its photos, comments and PDF are removed for good. This can\'t be undone.', okLabel: 'Delete permanently' })) {
+          await del(`/admin/deleted/${p.dataset.purge}`); toast('Deleted permanently'); deleted();
+        }
+      } catch (err) { toast(err.message, { error: true }); }
+    });
+  }
+
+  return { clients, client, templates, template, users, deleted };
 }

@@ -7,7 +7,7 @@ import {
 } from './lib/auth.mjs';
 import { adminRoutes } from './lib/admin.mjs';
 import { inspectionRoutes, loadInspection } from './lib/inspections.mjs';
-import { reviewRoutes, pdfFor } from './lib/review.mjs';
+import { reviewRoutes, pdfFor, purgeDeleted } from './lib/review.mjs';
 import { pdfFilename, PDF_PARTS } from './lib/pdf.mjs';
 import { portalRoutes } from './lib/portal.mjs';
 
@@ -116,3 +116,6 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => console.log(`FC Inspect on :${PORT}`));
+// Recently deleted keeps inspections 30 days; check now and every 6 hours
+const purge = () => purgeDeleted(pool).catch((e) => console.error('[purge]', e.message));
+purge(); setInterval(purge, 6 * 3600_000).unref();

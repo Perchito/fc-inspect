@@ -436,3 +436,6 @@ body:has(.app.focus) .toast { bottom: calc(96px + var(--safe-b)); }
 .chip-radio input:focus-visible + span { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 30%, transparent); }
 .pdf-opt { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); flex-wrap: wrap; padding: var(--s3) 0; border-top: 1px solid var(--line); }
 .pdf-opt small { display: block; color: var(--muted); font-size: 14px; }
+
+.preview-bar { display: flex; align-items: center; gap: var(--s2); margin: 0 var(--s4); padding: 8px 8px 8px 14px; border-radius: 12px; background: var(--amber-soft); color: var(--amber); font-weight: 650; font-size: 14px; }
+.preview-bar span { flex: 1; }

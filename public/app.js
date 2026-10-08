@@ -8,8 +8,11 @@ import { adminViews } from './admin.js?v=__V__';
 const VERSION = '__V__';
 const $app = document.getElementById('app');
 const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor' };
-let me = null;
+let me = null, realRole = null;
 const isAdmin = () => me?.role === 'admin';
+// "View as supervisor": an admin previews the supervisor app on this device (the server still treats them as admin)
+const previewing = () => { try { return realRole === 'admin' && localStorage.getItem('fci-sup-view') === '1'; } catch { return false; } };
+const setPreview = (on) => { try { on ? localStorage.setItem('fci-sup-view', '1') : localStorage.removeItem('fci-sup-view'); } catch {} location.reload(); };
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 document.documentElement.classList.toggle('standalone', !!standalone);
 
@@ -55,11 +58,13 @@ function shell({ title = '', subtitle = '', back = '', tab, focus = false, body 
           ${action ? (action.href ? `<a class="icon-btn accent" href="${action.href}" aria-label="${esc(action.label)}">${icon(action.icon)}</a>`
             : `<button class="icon-btn accent" id="${action.id}" aria-label="${esc(action.label)}">${icon(action.icon)}</button>`) : ''}
         </header>
+        ${previewing() ? `<div class="preview-bar">${icon('users')}<span>You're viewing as a supervisor</span><button class="btn sm" id="end-preview">Back to admin</button></div>` : ''}
         <main id="view" class="view" tabindex="-1">${body}</main>
       </div>
       ${focus ? '' : `<nav class="tabbar" aria-label="Main">${TABS.map(([k, href, ic, label]) =>
         `<a href="${href}" ${currentTab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>`}
     </div>`;
+  document.getElementById('end-preview')?.addEventListener('click', () => setPreview(false));
   return document.getElementById('view');
 }
 
@@ -111,7 +116,10 @@ function more() {
   view.innerHTML = `
     <section class="card media profile">${avatar(me.name, 'navy lg')}
       <span class="grow"><strong>${esc(me.name)}</strong><small>${esc(me.email)}</small><span class="tags"><span class="badge ${isAdmin() ? 'blue' : 'neutral'}">${ROLE_LABEL[me.role]}</span></span></span></section>
+    ${realRole === 'admin' ? `<div class="list-card">${previewing() ? row({ ic: 'back', title: 'Back to admin', sub: 'Leave the supervisor preview', id: 'preview-off' })
+      : row({ ic: 'users', title: 'View as supervisor', sub: 'See the app the way supervisors see it', id: 'preview-on' })}</div>` : ''}
     ${isAdmin() ? `<h3 class="section-h">Management</h3><div class="list-card">
+      ${row({ href: '#/deleted', ic: 'trash', title: 'Recently deleted', sub: 'Restore or remove for good — kept 30 days' })}
       ${row({ href: '#/clients', ic: 'building', title: 'Clients & sites', sub: 'Who you clean for and where' })}
       ${row({ href: '#/templates', ic: 'template', title: 'Templates', sub: 'Inspection checklists' })}
       ${row({ href: '#/users', ic: 'users', title: 'Team', sub: 'Admins and supervisors' })}</div>` : ''}
@@ -124,6 +132,8 @@ function more() {
     ${standalone ? '' : `<div class="note-box"><strong>${icon('sparkle', 'inline')} Install the app</strong>
       <p class="small">On iPhone: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>. It opens full screen and works offline.</p></div>`}
     <div class="list-card">${row({ ic: 'logout', title: 'Log out', danger: true, id: 'logout' })}</div>`;
+  view.querySelector('#preview-on')?.addEventListener('click', () => setPreview(true));
+  view.querySelector('#preview-off')?.addEventListener('click', () => setPreview(false));
   view.querySelector('#logout').onclick = logout;
 }
 
@@ -205,7 +215,7 @@ const ROUTES = () => [
   ...(isAdmin() ? [
     [/^#\/clients$/, () => admin.clients()], [/^#\/clients\/([\w-]+)$/, (id) => admin.client(id)],
     [/^#\/templates$/, () => admin.templates()], [/^#\/templates\/([\w-]+)$/, (id) => admin.template(id)],
-    [/^#\/users$/, () => admin.users()],
+    [/^#\/users$/, () => admin.users()], [/^#\/deleted$/, () => admin.deleted()],
   ] : []),
 ];
 // links from before the redesign (bookmarks, old emails) keep working
@@ -241,7 +251,7 @@ addEventListener('hashchange', () => me && route());
 addEventListener('fci:logged-out', () => { if (me) { me = null; showLogin('Your session ended — please log in again.'); } });
 
 async function start() {
-  try { me = await api('/me'); } catch (err) {
+  try { me = await api('/me'); realRole = me.role; if (previewing()) me = { ...me, role: 'inspector' }; } catch (err) {
     if (err.status === 401) return showLogin();
     $app.innerHTML = `<div class="login-screen">${errorState(err)}</div>`;
     document.getElementById('retry').onclick = start;

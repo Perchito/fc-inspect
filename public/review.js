@@ -150,8 +150,8 @@ export function reportViews({ shell, me }) {
       if (ok) { toast('Sent back'); location.hash = '#/inspections'; }
     });
     view.querySelector('#delete-insp')?.addEventListener('click', async () => {
-      if (!(await confirmSheet('Delete this inspection for good?', { text: `${insp.site_name} · ${modeLabel(insp)} · ${fmtDateTime(insp.started_at)}. Its items, photos, comments and PDF are removed. This can't be undone.`, okLabel: 'Delete for good' }))) return;
-      try { await del(`/admin/inspections/${id}`); toast('Inspection deleted'); location.hash = '#/inspections'; } catch (e) { toast(e.message, { error: true }); }
+      if (!(await confirmSheet('Delete this inspection?', { text: `${insp.site_name} · ${modeLabel(insp)} · ${fmtDateTime(insp.started_at)}. It moves to Recently deleted (More → Recently deleted) for 30 days, where you can restore it.`, okLabel: 'Delete' }))) return;
+      try { await del(`/admin/inspections/${id}`); toast('Moved to Recently deleted'); location.hash = '#/inspections'; } catch (e) { toast(e.message, { error: true }); }
     });
     view.querySelector('#unapprove')?.addEventListener('click', async () => {
       if (!(await confirmSheet('Move back to “To review”?', { okLabel: 'Move back', danger: false }))) return;

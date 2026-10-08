@@ -150,3 +150,7 @@ alter table clients add column if not exists prospect boolean not null default f
 -- starter who changed it; submitted_by = whoever signed and submitted
 alter table inspections add column if not exists contributors uuid[] not null default '{}';
 alter table inspections add column if not exists submitted_by uuid references users(id);
+
+-- recently deleted: an admin's delete only hides the inspection; it is purged 30 days later (or sooner by hand)
+alter table inspections add column if not exists deleted_at timestamptz;
+alter table inspections add column if not exists deleted_by uuid references users(id);
