@@ -98,7 +98,7 @@ function currentGps(timeout = 8000) {
 
 // ── photos ──────────────────────────────────────────────
 const MAX_SIDE = 1600;
-async function shrink(file) {
+export async function shrink(file) {
   try {
     const bmp = await createImageBitmap(file); // browsers apply the EXIF rotation here
     const scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
@@ -550,7 +550,7 @@ export function inspectViews({ shell, me }) {
 
     // note, score and action plan are saved together as one queued update per item
     let saveTimer, dirty = false;
-    const fields = () => ({ label: it.label, note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null });
+    const fields = () => ({ label: it.label, note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null, action_user_id: it.action_user_id ?? null });
     const saveItem = () => {
       clearTimeout(saveTimer);
       if (!dirty) return;
@@ -592,8 +592,11 @@ export function inspectViews({ shell, me }) {
           let staff = [];
           try { staff = await api('/staff-names'); localStorage.setItem('fci-staff-names', JSON.stringify(staff)); }
           catch { try { staff = JSON.parse(localStorage.getItem('fci-staff-names') || '[]'); } catch {} }
+          staff = staff.map((x) => (typeof x === 'string' ? { name: x, user_id: null } : x)); // older saved lists were names only
+          const names = staff.map((x) => x.name);
           const who = staff.length ? { name: 'action_who', label: 'Assigned to', type: 'select', value: it.action_who || '', required: true,
-            options: [{ value: '', label: 'Choose someone…' }, ...(it.action_who && !staff.includes(it.action_who) ? [it.action_who] : []).concat(staff).map((n) => ({ value: n, label: n }))] }
+            hint: 'They get a notification in FC Inspect when the inspection is submitted.',
+            options: [{ value: '', label: 'Choose someone…' }, ...(it.action_who && !names.includes(it.action_who) ? [it.action_who] : []).concat(names).map((n) => ({ value: n, label: n }))] }
             : { name: 'action_who', label: 'Assigned to', value: it.action_who, required: true, placeholder: 'Name' };
           const v = await sheet({
             title: 'Urgent action', text: `${it.label} scored ${it.score}/10. How will it be put right?`, submitLabel: 'Save action',
@@ -604,7 +607,9 @@ export function inspectViews({ shell, me }) {
             ],
           });
           if (!v) return;
-          Object.assign(it, { action_what: v.action_what.trim(), action_who: v.action_who.trim(), action_due: v.action_due });
+          const person = staff.find((x) => x.name === v.action_who.trim());
+          Object.assign(it, { action_what: v.action_what.trim(), action_who: v.action_who.trim(), action_due: v.action_due,
+            action_user_id: person ? person.user_id : it.action_who === v.action_who.trim() ? it.action_user_id ?? null : null });
           changed(true); renderScore(); toast('Action saved');
         };
       };

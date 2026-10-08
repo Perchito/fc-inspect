@@ -442,3 +442,12 @@ body:has(.app.focus) .toast { bottom: calc(96px + var(--safe-b)); }
 
 .icon-btn.sm-pen { width: 32px; height: 32px; vertical-align: middle; color: var(--faint); }
 .icon-btn.sm-pen .ic { width: 16px; height: 16px; }
+.tabbar.tabs-5 { grid-template-columns: repeat(5, 1fr); }
+.tabbar.tabs-3 { grid-template-columns: repeat(3, 1fr); }
+.tabbar a { position: relative; }
+.tabbar .dot { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.notif { display: flex; gap: var(--s3); padding: 14px var(--s4); text-decoration: none; color: inherit; }
+.notif + .notif { border-top: 1px solid var(--line); }
+.notif.unread strong::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); margin-right: 8px; vertical-align: middle; }
+.notif p { margin: 2px 0; font-size: 15px; color: var(--muted); }
+.notif small { color: var(--faint); font-size: 13px; }

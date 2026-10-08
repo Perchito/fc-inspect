@@ -7,7 +7,7 @@ import { adminViews } from './admin.js?v=__V__';
 
 const VERSION = '__V__';
 const $app = document.getElementById('app');
-const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor' };
+const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor', cleaner: 'Cleaner' };
 let me = null, realRole = null;
 const isAdmin = () => me?.role === 'admin';
 // "View as supervisor": an admin previews the supervisor app on this device (the server still treats them as admin)
@@ -29,10 +29,20 @@ const pillHtml = () => { const s = syncInfo(); return `<a class="sync-pill ${s.t
 outbox.onChange(() => { const el = document.getElementById('sync-pill'); if (el) el.outerHTML = pillHtml(); });
 
 // ── shell ───────────────────────────────────────────────
-const TABS = [['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'], ['more', '#/more', 'more', 'More']];
-const SIDE = () => [
+// cleaners only get their assigned actions + notifications; everyone else the full app plus Notifications
+const isCleaner = () => me?.role === 'cleaner';
+const TABS = () => isCleaner()
+  ? [['myactions', '#/my-actions', 'actions', 'My actions'], ['alerts', '#/notifications', 'bell', 'Notifications'], ['more', '#/more', 'more', 'More']]
+  : [['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'], ['alerts', '#/notifications', 'bell', 'Alerts'], ['more', '#/more', 'more', 'More']];
+let unread = 0;
+const refreshUnread = () => api('/notifications/unread').then((r) => {
+  unread = r.count;
+  document.querySelectorAll('[data-unread]').forEach((el) => { el.textContent = unread > 9 ? '9+' : unread; el.hidden = !unread; });
+}).catch(() => {});
+const SIDE = () => isCleaner() ? [['myactions', '#/my-actions', 'actions', 'My actions'], ['alerts', '#/notifications', 'bell', 'Notifications']] : [
   ['home', '#/home', 'home', 'Home'], ['inspections', '#/inspections', 'list', 'Inspections'], ['actions', '#/actions', 'actions', 'Actions'],
   ['prospects', '#/prospects', 'sparkle', 'Prospects'],
+  ['alerts', '#/notifications', 'bell', 'Notifications'],
   ...(isAdmin() ? [['clients', '#/clients', 'building', 'Clients'], ['templates', '#/templates', 'template', 'Templates'], ['users', '#/users', 'users', 'Team']] : []),
   ['sync', '#/sync', 'sync', 'Sync'], ['more', '#/more', 'more', 'More'],
 ];
@@ -46,7 +56,7 @@ function shell({ title = '', subtitle = '', back = '', tab, focus = false, body 
     <div class="app${focus ? ' focus' : ''}">
       <aside class="sidebar" aria-label="Main">
         <div class="brand"><img src="/img/fc-logo-white.png" alt="FC Cleaning Company Ltd"><span>FC Inspect</span></div>
-        <a class="btn primary block" href="#/start">${icon('plus')} Start inspection</a>
+        ${isCleaner() ? '' : `<a class="btn primary block" href="#/start">${icon('plus')} Start inspection</a>`}
         <nav>${SIDE().map(([k, href, ic, label]) => `<a href="${href}" ${sideOn(k) ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
         <a class="side-user" href="#/more">${avatar(me.name, 'light')}<span><strong>${esc(me.name)}</strong><small>${ROLE_LABEL[me.role] || me.role}</small></span></a>
       </aside>
@@ -61,8 +71,8 @@ function shell({ title = '', subtitle = '', back = '', tab, focus = false, body 
         ${previewing() ? `<div class="preview-bar">${icon('users')}<span>You're viewing as a supervisor</span><button class="btn sm" id="end-preview">Back to admin</button></div>` : ''}
         <main id="view" class="view" tabindex="-1">${body}</main>
       </div>
-      ${focus ? '' : `<nav class="tabbar" aria-label="Main">${TABS.map(([k, href, ic, label]) =>
-        `<a href="${href}" ${currentTab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>`}
+      ${focus ? '' : `<nav class="tabbar tabs-${TABS().length}" aria-label="Main">${TABS().map(([k, href, ic, label]) =>
+        `<a href="${href}" ${currentTab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span>${k === 'alerts' ? `<span class="dot" data-unread ${unread ? '' : 'hidden'}>${unread > 9 ? '9+' : unread}</span>` : ''}</a>`).join('')}</nav>`}
     </div>`;
   document.getElementById('end-preview')?.addEventListener('click', () => setPreview(false));
   return document.getElementById('view');
@@ -123,9 +133,9 @@ function more() {
       ${row({ href: '#/clients', ic: 'building', title: 'Clients & sites', sub: 'Who you clean for and where' })}
       ${row({ href: '#/templates', ic: 'template', title: 'Templates', sub: 'Inspection checklists' })}
       ${row({ href: '#/users', ic: 'users', title: 'Team', sub: 'Admins and supervisors' })}</div>` : ''}
-    <h3 class="section-h">Prospects</h3><div class="list-card">
+    ${isCleaner() ? '' : `<h3 class="section-h">Prospects</h3><div class="list-card">
       ${row({ href: '#/prospects', ic: 'sparkle', title: 'Prospects', sub: 'Potential clients from quick inspections' })}
-      ${row({ href: '#/quick', ic: 'plus', title: 'Quick inspection', sub: 'No site needed — name the business now or later' })}</div>
+      ${row({ href: '#/quick', ic: 'plus', title: 'Quick inspection', sub: 'No site needed — name the business now or later' })}</div>`}
     <h3 class="section-h">App</h3><div class="list-card">
       ${row({ href: '#/sync', ic: 'sync', title: 'Offline & sync', sub: syncInfo().text })}
       ${row({ href: '#/about', ic: 'info', title: 'About FC Inspect', sub: 'Version, notifications, help' })}</div>
@@ -202,8 +212,13 @@ async function inspectionRoute(id, sub, n) {
 }
 
 const UUID = '([0-9a-f-]{36})';
-const ROUTES = () => [
+const ROUTES = () => isCleaner() ? [
+  [/^#\/my-actions$/, () => lists.myActions()], [new RegExp(`^#/my-actions/${UUID}/([^/]+)$`), (i, k) => lists.myAction(i, decodeURIComponent(k))],
+  [/^#\/notifications$/, () => lists.notifications(refreshUnread)], [/^#\/more$/, more], [/^#\/sync$/, syncScreen], [/^#\/about$/, about],
+] : [
   [/^#\/home$/, () => lists.home()],
+  [/^#\/my-actions$/, () => lists.myActions()], [new RegExp(`^#/my-actions/${UUID}/([^/]+)$`), (i, k) => lists.myAction(i, decodeURIComponent(k))],
+  [/^#\/notifications$/, () => lists.notifications(refreshUnread)],
   [/^#\/quick$/, () => insp.quick()],
   [/^#\/prospects$/, () => lists.prospects()],
   [/^#\/start(?:\/([0-9a-f-]{36}))?(?:\/([\w.-]+))?$/, (site, choice) => insp.start(site, choice)],
@@ -236,7 +251,8 @@ async function route() {
   if (legacy) { location.replace(legacy[1](...location.hash.match(legacy[0]).slice(1))); return; }
   const [path, qs] = location.hash.split('?');
   const hit = ROUTES().find(([re]) => re.test(path));
-  if (!hit) { location.replace('#/home'); return; }
+  if (!hit) { location.replace(isCleaner() ? '#/my-actions' : '#/home'); return; }
+  refreshUnread();
   const args = path.match(hit[0]).slice(1);
   if (qs) args.push(Object.fromEntries(new URLSearchParams(qs)));
   scrollTo(0, 0);
@@ -259,6 +275,7 @@ async function start() {
   }
   const ctx = { shell, me: () => me, setLeaveGuard };
   insp = inspectViews(ctx); report = reportViews(ctx); lists = listViews(ctx); admin = adminViews(ctx);
+  setInterval(() => { if (me && !document.hidden) refreshUnread(); }, 60_000);
   if (!location.hash || location.hash === '#/') location.replace('#/home');
   else route();
   flush();

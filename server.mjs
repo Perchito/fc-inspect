@@ -8,6 +8,7 @@ import {
 import { adminRoutes } from './lib/admin.mjs';
 import { inspectionRoutes, loadInspection } from './lib/inspections.mjs';
 import { reviewRoutes, pdfFor, purgeDeleted } from './lib/review.mjs';
+import { actionRoutes, remindOverdue } from './lib/actions.mjs';
 import { pdfFilename, PDF_PARTS } from './lib/pdf.mjs';
 import { portalRoutes } from './lib/portal.mjs';
 
@@ -30,7 +31,7 @@ app.use(async (req, res, next) => {
     const { rows } = await pool.query(
       `select u.id, u.email, u.name, u.role, u.client_id from sessions s
          join users u on u.id = s.user_id
-        where s.token_hash = $1 and s.expires_at > now() and u.active and u.role in ('admin', 'inspector')`,
+        where s.token_hash = $1 and s.expires_at > now() and u.active and u.role in ('admin', 'inspector', 'cleaner')`,
       [tokenHash(token)]);
     req.user = rows[0];
     next();
@@ -48,7 +49,7 @@ app.post('/api/login', async (req, res) => {
   if (loginBlocked(ip)) return res.status(429).json({ error: 'Too many attempts — try again in 15 minutes.' });
   const { email = '', password = '' } = req.body || {};
   // for now only admins and supervisors (inspector role) log in; clients get reports as emailed PDFs
-  const { rows } = await pool.query(`select id, pass_hash from users where lower(email) = lower($1) and active and role in ('admin', 'inspector')`, [String(email).trim()]);
+  const { rows } = await pool.query(`select id, pass_hash from users where lower(email) = lower($1) and active and role in ('admin', 'inspector', 'cleaner')`, [String(email).trim()]); // cleaners: My actions + notifications only
   if (!rows[0] || !verifyPassword(String(password), rows[0].pass_hash)) {
     loginFailed(ip);
     console.warn(`[auth] failed login for ${String(email).slice(0, 80)} from ${ip}`);
@@ -82,7 +83,7 @@ app.get('/api/inspections/:id/pdf', requireUser(), async (req, res) => {
     'content-disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${pdfFilename(insp)}"`,
   }).send(pdf);
 });
-app.use('/api', inspectionRoutes(pool, requireUser), portalRoutes(pool, requireUser));
+app.use('/api', inspectionRoutes(pool, requireUser), portalRoutes(pool, requireUser), actionRoutes(pool, requireUser));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -119,3 +120,6 @@ app.listen(PORT, () => console.log(`FC Inspect on :${PORT}`));
 // Recently deleted keeps inspections 30 days; check now and every 6 hours
 const purge = () => purgeDeleted(pool).catch((e) => console.error('[purge]', e.message));
 purge(); setInterval(purge, 6 * 3600_000).unref();
+// overdue action reminders (each action at most once a day)
+const remind = () => remindOverdue(pool).catch((e) => console.error('[remind]', e.message));
+setTimeout(remind, 60_000).unref(); setInterval(remind, 3600_000).unref();

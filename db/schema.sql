@@ -154,3 +154,22 @@ alter table inspections add column if not exists submitted_by uuid references us
 -- recently deleted: an admin's delete only hides the inspection; it is purged 30 days later (or sooner by hand)
 alter table inspections add column if not exists deleted_at timestamptz;
 alter table inspections add column if not exists deleted_by uuid references users(id);
+
+-- action plans are assigned to a person (their FC Inspect login), who is notified and can mark it done
+alter table inspection_items add column if not exists action_user_id uuid references users(id) on delete set null;
+alter table inspection_items add column if not exists action_notified boolean not null default false;
+alter table inspection_items add column if not exists action_reminded_at timestamptz;
+alter table inspection_items add column if not exists action_done_note text;
+-- a photo taken when the action was done (shown as "after the fix")
+alter table photos add column if not exists action boolean not null default false;
+
+create table if not exists notifications (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references users(id) on delete cascade,
+  title      text not null,
+  body       text not null default '',
+  link       text,
+  created_at timestamptz not null default now(),
+  read_at    timestamptz
+);
+create index if not exists notifications_user_idx on notifications (user_id, created_at desc);

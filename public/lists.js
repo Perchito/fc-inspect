@@ -3,7 +3,7 @@ import {
   esc, icon, api, statusBadge, scoreBadge, modeLabel, progressBar, relDay, dueText, daysUntil, skeleton, emptyState,
   errorState, chips, searchBar, LOW_SCORE, fmtDateTime, viewer, put, post, toast, sheet, confirmSheet,
 } from './ui.js?v=__V__';
-import { fetchMine, sync } from './inspect.js?v=__V__';
+import { fetchMine, sync, shrink } from './inspect.js?v=__V__';
 import { itemPhotosHtml, bindActionToggles } from './review.js?v=__V__';
 
 const title = (i) => (i.template_id ? i.template_name : modeLabel(i));
@@ -131,10 +131,11 @@ export function listViews({ shell, me }) {
     try { [openList, doneList] = await Promise.all([api('/actions'), api('/actions?done=1')]); }
     catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = actions; return; }
     const soon = openList.filter((a) => daysUntil(a.action_due) != null && daysUntil(a.action_due) <= 2);
-    const lists = { open: openList, soon, done: doneList };
+    const mineOpen = openList.filter((a) => a.action_user_id === me().id);
+    const lists = { open: openList, mine: mineOpen, soon, done: doneList };
     const render = () => {
       const list = lists[actionTab];
-      view.innerHTML = `${chips([['open', 'Open', openList.length], ['soon', 'Due soon', soon.length], ['done', 'Completed', doneList.length]], actionTab)}
+      view.innerHTML = `${chips([['open', 'Open', openList.length], ['mine', 'Mine', mineOpen.length], ['soon', 'Due soon', soon.length], ['done', 'Completed', doneList.length]], actionTab)}
         ${list.length ? `<div class="card-grid">${list.map(actionCard).join('')}</div>`
           : actionTab === 'done' ? emptyState({ icon: 'actions', title: 'Nothing completed yet', text: 'Completed actions are listed here.' })
             : emptyState({ icon: 'check', title: 'No open actions', text: 'Everything is up to date.' })}
@@ -161,10 +162,12 @@ export function listViews({ shell, me }) {
           <dt>Assigned to</dt><dd>${esc(it.action_who)}</dd>
           <dt>Deadline</dt><dd>${esc(dueText(it.action_due))}</dd>
           ${it.action_done_at ? `<dt>Completed</dt><dd>${esc(fmtDateTime(it.action_done_at))}${it.action_done_by_name ? ` by ${esc(it.action_done_by_name)}` : ''}</dd>` : ''}
+          ${it.action_done_note ? `<dt>Their note</dt><dd>${esc(it.action_done_note)}</dd>` : ''}
         </dl>
       </section>
       ${it.note ? `<section class="card"><h3>What was found</h3><p class="note">${esc(it.note)}</p></section>` : ''}
       <section class="card"><h3>Photos</h3><div id="ph">${itemPhotosHtml(insp, it)}</div></section>
+      ${(insp.action_photos || []).some((p) => p.item_key === itemKey) ? `<section class="card"><h3>Photo of the fix</h3><div class="ph-grid">${insp.action_photos.filter((p) => p.item_key === itemKey).map((p) => `<figure class="ph"><a class="ph-open" href="/api/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/photos/${p.id}" alt="Photo of the fix" loading="lazy"></a></figure>`).join('')}</div></section>` : ''}
       <a class="card tap media" href="#/inspections/${insp.id}">
         <span class="card-ic">${icon('file')}</span>
         <span class="grow"><small>Created from</small><strong>${esc(insp.template_id ? insp.template_name : modeLabel(insp))}</strong><small>${esc(insp.inspector_name)} · ${esc(relDay(insp.finished_at || insp.started_at))}</small></span>${icon('chevron', 'chev')}</a>
@@ -212,5 +215,76 @@ export function listViews({ shell, me }) {
     });
   }
 
-  return { home, inspections, actions, action, prospects, syncState: () => sync };
+  // ── notifications (everyone) ──
+  async function notifications(refreshUnread) {
+    const view = shell({ title: 'Notifications', tab: 'alerts', body: skeleton(3) });
+    let list;
+    try { list = await api('/notifications'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = () => notifications(refreshUnread); return; }
+    view.innerHTML = list.length ? `<div class="list-card">${list.map((n) => `<a class="notif ${n.read_at ? '' : 'unread'}" href="${esc(n.link || '#/notifications')}">
+        <span class="grow"><strong>${esc(n.title)}</strong>${n.body ? `<p>${esc(n.body)}</p>` : ''}<small>${esc(relDay(n.created_at))}</small></span></a>`).join('')}</div>`
+      : emptyState({ icon: 'bell', title: 'No notifications yet', text: 'New actions assigned to you, reminders and updates show here.' });
+    if (list.some((n) => !n.read_at)) await post('/notifications/read').then(refreshUnread).catch(() => {});
+  }
+
+  // ── my actions: urgent actions assigned to me ──
+  async function myActions() {
+    const view = shell({ title: 'My actions', subtitle: 'Urgent fixes assigned to you', tab: me().role === 'cleaner' ? 'myactions' : 'actions', body: skeleton(3) });
+    let list;
+    try { list = await api('/me/actions'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = myActions; return; }
+    const open = list.filter((a) => !a.action_done_at), done = list.filter((a) => a.action_done_at);
+    const card = (a) => { const d = daysUntil(a.action_due); return `<a class="card tap" href="#/my-actions/${a.inspection_id}/${encodeURIComponent(a.item_key)}">
+        <div class="row-between"><strong>${esc(a.site_name)}</strong>${a.action_done_at ? `<span class="badge green">${icon('check')} Done</span>`
+          : `<span class="badge ${d != null && d < 0 ? 'red' : d != null && d <= 1 ? 'amber' : 'neutral'}">${esc(dueText(a.action_due))}</span>`}</div>
+        <p>${esc(a.action_what)}</p><small class="muted">${esc(a.area ? `${a.area} › ` : '')}${esc(a.label)}</small></a>`; };
+    view.innerHTML = list.length ? `${open.length ? `<h3 class="section-h">To do · ${open.length}</h3><div class="card-grid">${open.map(card).join('')}</div>` : '<section class="card"><p>Nothing to do — all your actions are done. 🎉</p></section>'}
+      ${done.length ? `<h3 class="section-h">Done</h3><div class="card-grid">${done.slice(0, 20).map(card).join('')}</div>` : ''}`
+      : emptyState({ icon: 'check', title: 'No actions for you', text: 'When an urgent action is assigned to you, it shows here.' });
+  }
+
+  async function myAction(inspectionId, itemKey) {
+    const view = shell({ title: 'Action', back: '#/my-actions', focus: true, body: skeleton(2) });
+    let a;
+    try { a = await api(`/me/actions/${inspectionId}/${encodeURIComponent(itemKey)}`); }
+    catch (e) { view.innerHTML = e.status === 404 ? emptyState({ icon: 'alert', title: 'Action not found', text: 'It may have been reassigned or removed.' }) : errorState(e); return; }
+    const reload = () => myAction(inspectionId, itemKey);
+    const shots = (list, label) => list.length ? `<div class="ph-grid">${list.map((p) => `<figure class="ph"><button class="ph-open" data-view="${p.id}" aria-label="View ${label}"><img src="/api/photos/${p.id}" alt="${label}" loading="lazy"></button></figure>`).join('')}</div>` : '';
+    const found = a.photos.filter((p) => !p.action), fixed = a.photos.filter((p) => p.action);
+    view.innerHTML = `
+      <section class="card">
+        <span class="badge ${a.action_done_at ? 'green' : daysUntil(a.action_due) < 0 ? 'red' : 'amber'}">${a.action_done_at ? `${icon('check')} Done` : esc(dueText(a.action_due))}</span>
+        <h2 class="action-title">${esc(a.action_what)}</h2>
+        <p class="muted">${esc(a.site_name)}${a.site_address ? ` · ${esc(a.site_address)}` : ''}</p>
+        <dl class="facts"><dt>Item</dt><dd>${esc(a.area ? `${a.area} › ` : '')}${esc(a.label)} ${scoreBadge(a.score)}</dd><dt>Deadline</dt><dd>${esc(dueText(a.action_due))}</dd>
+          ${a.action_done_at ? `<dt>Done</dt><dd>${esc(fmtDateTime(a.action_done_at))}${a.action_done_by_name ? ` by ${esc(a.action_done_by_name)}` : ''}</dd>` : ''}
+          ${a.action_done_note ? `<dt>Note</dt><dd>${esc(a.action_done_note)}</dd>` : ''}</dl>
+      </section>
+      ${a.note ? `<section class="card"><h3>What was found</h3><p class="note">${esc(a.note)}</p></section>` : ''}
+      ${found.length ? `<section class="card"><h3>Photos from the inspection</h3><div id="ph-found">${shots(found, 'photo')}</div></section>` : ''}
+      <section class="card"><div class="row-between"><h3>Photo of the fix</h3><label class="btn sm">${icon('camera')} Add photo<input type="file" accept="image/*" capture="environment" hidden id="fix-photo"></label></div>
+        <div id="ph-fixed">${shots(fixed, 'photo of the fix') || '<p class="muted small">Optional — show it\'s been put right.</p>'}</div></section>
+      ${a.action_done_at ? '' : `<div class="bottom-bar"><button class="btn primary block lg" id="done">${icon('check')} Mark as done</button></div>`}`;
+    view.querySelector('#fix-photo').addEventListener('change', async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        const blob = await shrink(file);
+        const res = await fetch(`/api/me/actions/${inspectionId}/${encodeURIComponent(itemKey)}/photos/${crypto.randomUUID()}`, { method: 'PUT', body: blob, headers: { 'content-type': blob.type }, credentials: 'same-origin' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Upload failed — try again with signal');
+        toast('Photo added'); reload();
+      } catch (err) { toast(err.message, { error: true }); }
+    });
+    view.querySelector('#done')?.addEventListener('click', async () => {
+      const v = await sheet({ title: 'Mark as done?', text: 'The office is told straight away.', submitLabel: 'Mark as done',
+        fields: [{ name: 'note', label: 'Note (optional)', type: 'textarea', placeholder: 'e.g. Re-cleaned and degreased, all good now' }] });
+      if (!v) return;
+      try { await post(`/me/actions/${inspectionId}/${encodeURIComponent(itemKey)}/done`, { note: v.note }); toast('Marked as done — thank you'); reload(); }
+      catch (err) { toast(err.message, { error: true }); }
+    });
+    view.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]'); if (!b) return;
+      const all = a.photos.map((p) => ({ ...p, src: `/api/photos/${p.id}`, label: p.action ? 'Fix' : 'Photo' }));
+      viewer(all, Math.max(0, all.findIndex((p) => p.id === b.dataset.view)));
+    });
+  }
+
+  return { home, inspections, actions, action, prospects, notifications, myActions, myAction, syncState: () => sync };
 }
