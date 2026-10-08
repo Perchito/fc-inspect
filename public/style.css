@@ -439,3 +439,6 @@ body:has(.app.focus) .toast { bottom: calc(96px + var(--safe-b)); }
 
 .preview-bar { display: flex; align-items: center; gap: var(--s2); margin: 0 var(--s4); padding: 8px 8px 8px 14px; border-radius: 12px; background: var(--amber-soft); color: var(--amber); font-weight: 650; font-size: 14px; }
 .preview-bar span { flex: 1; }
+
+.icon-btn.sm-pen { width: 32px; height: 32px; vertical-align: middle; color: var(--faint); }
+.icon-btn.sm-pen .ic { width: 16px; height: 16px; }

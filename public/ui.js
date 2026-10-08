@@ -280,5 +280,8 @@ export function itemNums(items) {
   });
 }
 // heading shown before the first item of each area ('' otherwise)
-export const areaHead = (items, nums, i) => items[i].area && items[i].area !== items[i - 1]?.area
-  ? `<h4 class="area-h">${nums[i].split('.')[0]}. ${esc(items[i].area)}</h4>` : '';
+// area heading; rename = show a pencil (data-rename-area) to rename the whole area
+export const areaHead = (items, nums, i, { rename = false } = {}) => items[i].area && items[i].area !== items[i - 1]?.area
+  ? `<h4 class="area-h">${nums[i].split('.')[0]}. ${esc(items[i].area)}${rename ? ` <button class="icon-btn sm-pen" data-rename-area="${esc(items[i].area)}" aria-label="Rename area">${icon('pen')}</button>` : ''}</h4>` : '';
+// ask for a new name (item or area); resolves with the trimmed name or null
+export const askName = async (title, value, label = 'Name') => (await sheet({ title, submitLabel: 'Rename', fields: [{ name: 'name', label, value, required: true }] }))?.name?.trim() || null;

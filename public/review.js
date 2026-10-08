@@ -2,7 +2,7 @@
 // actions done); supervisors see the same report read-only once it has been submitted.
 import {
   esc, icon, post, put, del, toast, sheet, confirmSheet, viewer, statusBadge, scoreBadge, modeLabel, fmtDateTime,
-  relDay, dueText, LOW_SCORE, savePdf, itemNums, areaHead,
+  relDay, dueText, LOW_SCORE, savePdf, itemNums, areaHead, askName,
 } from './ui.js?v=__V__';
 
 const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
@@ -77,9 +77,10 @@ export function reportViews({ shell, me }) {
         </dl>
       </section>
       ${editing ? '<p class="note-box">You can tidy up notes and delete photos before approving.</p>' : ''}
-      ${insp.items.map((it, n) => `${areaHead(insp.items, nums, n)}
+      ${insp.items.map((it, n) => `${areaHead(insp.items, nums, n, { rename: editing })}
         <section class="card report-item">
           ${it.label?.trim() || it.score ? `<div class="row-between"><h3>${it.label?.trim() ? `<span class="muted">${nums[n]}${it.area ? '' : '.'}</span> ${esc(it.label)}` : ''}${it.added && insp.template_id ? ' <span class="badge neutral">Added on site</span>' : ''}</h3>${scoreBadge(it.score)}</div>` : ''}
+          ${editing ? `<button class="link" data-rename-item="${esc(it.item_key)}">${icon('pen', 'inline')} Rename item</button>` : ''}
           ${actionPlanHtml(it, { canToggle: admin && insp.status !== 'draft', inspectionId: id })}
           ${editing ? `<label class="field"><span>Notes</span><textarea data-note="${esc(it.item_key)}" rows="2" placeholder="No notes">${esc(it.note)}</textarea></label>`
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
@@ -149,6 +150,16 @@ export function reportViews({ shell, me }) {
       });
       if (ok) { toast('Sent back'); location.hash = '#/inspections'; }
     });
+    view.querySelectorAll('[data-rename-area]').forEach((b) => b.addEventListener('click', async () => {
+      const from = b.dataset.renameArea, to = await askName('Rename area', from, 'Area name');
+      if (!to || to === from) return;
+      try { await post(`/admin/inspections/${id}/areas`, { from, to }); toast('Area renamed'); reload(); } catch (e) { toast(e.message, { error: true }); }
+    }));
+    view.querySelectorAll('[data-rename-item]').forEach((b) => b.addEventListener('click', async () => {
+      const it = insp.items.find((x) => x.item_key === b.dataset.renameItem), name = await askName('Rename item', it.label, 'Item name');
+      if (!name || name === it.label) return;
+      try { await put(`/admin/inspections/${id}/items/${encodeURIComponent(it.item_key)}`, { label: name }); toast('Item renamed'); reload(); } catch (e) { toast(e.message, { error: true }); }
+    }));
     view.querySelector('#delete-insp')?.addEventListener('click', async () => {
       if (!(await confirmSheet('Delete this inspection?', { text: `${insp.site_name} · ${modeLabel(insp)} · ${fmtDateTime(insp.started_at)}. It moves to Recently deleted (More → Recently deleted) for 30 days, where you can restore it.`, okLabel: 'Delete' }))) return;
       try { await del(`/admin/inspections/${id}`); toast('Moved to Recently deleted'); location.hash = '#/inspections'; } catch (e) { toast(e.message, { error: true }); }

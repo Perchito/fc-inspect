@@ -3,7 +3,7 @@
 // so a dropped signal never loses work — including starting an inspection with no signal at all.
 import {
   esc, icon, api, post, del, toast, sheet, confirmSheet, viewer, skeleton, emptyState, errorState, statusBadge,
-  scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar, itemNums, areaHead,
+  scoreBadge, scoreWord, modeLabel, progressBar, LOW_SCORE, relDay, fmtDateTime, searchBar, itemNums, areaHead, askName,
 } from './ui.js?v=__V__';
 
 // items added on site go at the end of their area (no area / a new area: the end of the list) — same rule as the server
@@ -399,7 +399,7 @@ export function inspectViews({ shell, me }) {
       ${insp.mode === 'before_after' && total ? '<p class="note-box">Take the before photos now. Leave this inspection open during the clean, then come back and add an after photo next to each one.</p>' : ''}
       ${total ? `<h3 class="section-h">Items</h3><div class="stack">${insp.items.map((it, n) => {
         const count = photos.filter((p) => p.item_key === it.item_key).length;
-        return `${areaHead(insp.items, nums, n)}<a class="card tap media item-card" href="${base(id)}/item/${n + 1}">
+        return `${areaHead(insp.items, nums, n, { rename: !insp.local })}<a class="card tap media item-card" href="${base(id)}/item/${n + 1}">
           <span class="item-num state-${states[n]}">${states[n] === 'done' ? icon('check') : nums[n]}</span>
           <span class="grow"><strong>${esc(it.label)}</strong>
             <small>${STATE_LABEL[states[n]]}${count ? ` · ${count} photo${count === 1 ? '' : 's'}` : ''}${it.note?.trim() ? ' · note' : ''}</small></span>
@@ -411,6 +411,13 @@ export function inspectViews({ shell, me }) {
         ? `<a class="btn primary block lg" href="${base(id)}/item/${nextTodo + 1}">${done ? 'Continue' : 'Start'} · item ${nextTodo + 1} of ${total} ${icon('chevron')}</a>`
         : `<a class="btn primary block lg" href="${base(id)}/review">Review &amp; submit ${icon('chevron')}</a>`}</div>` : ''}` });
     view.querySelector('#add-item').onclick = () => addItem(insp, { first: !total });
+    view.querySelectorAll('[data-rename-area]').forEach((b) => b.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const from = b.dataset.renameArea, to = await askName('Rename area', from, 'Area name');
+      if (!to || to === from) return;
+      try { await post(`/inspections/${id}/areas`, { from, to }); for (const it of insp.items) if (it.area === from) it.area = to; toast('Area renamed'); detail(insp); }
+      catch (err) { toast(err.offline ? 'Renaming an area needs a connection.' : err.message, { error: true }); }
+    }));
     live(id, (fresh) => detail(fresh));
     view.querySelector('#comment-post')?.addEventListener('click', async (e) => {
       const ta = view.querySelector('#comment-body'), body = ta.value.trim();
@@ -444,7 +451,7 @@ export function inspectViews({ shell, me }) {
       <div class="progress thin" aria-hidden="true"><span style="width:${(n / total) * 100}%"></span></div>
       <header class="item-head">
         <p class="eyebrow">${esc(it.area || itemTitle(insp))}</p>
-        <h1>${it.area ? `<span class="muted">${itemNums(insp.items)[n - 1]}</span> ` : ''}${esc(it.label)}</h1>
+        <h1>${it.area ? `<span class="muted">${itemNums(insp.items)[n - 1]}</span> ` : ''}${esc(it.label)} <button class="icon-btn sm-pen" id="rename-item" aria-label="Rename item">${icon('pen')}</button></h1>
         ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
         ${it.added ? `<p class="small">${free ? '' : '<span class="badge neutral">Added on site</span> '}<button class="link danger" id="remove-item">Remove this item</button></p>` : ''}
       </header>
@@ -543,7 +550,7 @@ export function inspectViews({ shell, me }) {
 
     // note, score and action plan are saved together as one queued update per item
     let saveTimer, dirty = false;
-    const fields = () => ({ note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null });
+    const fields = () => ({ label: it.label, note: it.note, score: it.score ?? null, action_what: it.action_what ?? '', action_who: it.action_who ?? '', action_due: it.action_due || null });
     const saveItem = () => {
       clearTimeout(saveTimer);
       if (!dirty) return;
@@ -604,6 +611,11 @@ export function inspectViews({ shell, me }) {
     }
 
     view.querySelector('#add-item').onclick = () => { saveItem(); addItem(insp, { area: it.area }); };
+    view.querySelector('#rename-item').onclick = async () => {
+      const name = await askName('Rename item', it.label, 'Item name');
+      if (!name || name === it.label) return;
+      it.label = name.slice(0, 200); changed(true); toast('Item renamed'); item(id, n);
+    };
     // someone else may add or remove items: stay on this item by its key, wherever it now sits
     live(id, (fresh) => {
       saveItem();
