@@ -285,13 +285,16 @@ export function adminViews({ shell, me, setLeaveGuard }) {
     let list;
     try { list = await api('/admin/deleted'); } catch (e) { return fail(view, e, deleted); }
     const left = (d) => Math.max(0, 30 - Math.floor((Date.now() - new Date(d)) / 86400000));
-    view.innerHTML = list.length ? `<div class="stack">${list.map((i) => `<section class="card">
+    const card = (i) => `<section class="card">
         <div class="row-between"><strong>${esc(i.site_name)}</strong>${statusBadge(i.status)}</div>
         <p class="small muted">${esc(i.client_name)} · ${esc(i.template_id ? i.template_name : modeLabel(i))} · ${esc(i.inspector_name)} · ${i.photo_count} photo${i.photo_count === 1 ? '' : 's'}</p>
         <p class="small">Deleted ${esc(relDay(i.deleted_at))}${i.deleted_by_name ? ` by ${esc(i.deleted_by_name)}` : ''} · <strong>removed for good in ${left(i.deleted_at)} day${left(i.deleted_at) === 1 ? '' : 's'}</strong></p>
         <div class="btn-row"><button class="btn sm" data-restore="${i.id}">${icon('back')} Restore</button><button class="btn sm ghost-danger" data-purge="${i.id}">${icon('trash')} Delete permanently</button></div>
-      </section>`).join('')}</div>`
-      : emptyState({ icon: 'trash', title: 'Nothing here', text: 'Deleted inspections stay here for 30 days.' });
+      </section>`;
+    const groups = [['Not submitted', ['draft', 'returned']], ['Submitted', ['submitted']], ['Approved', ['approved']]]
+      .map(([title, st]) => [title, list.filter((i) => st.includes(i.status))]).filter(([, l]) => l.length);
+    view.innerHTML = list.length ? groups.map(([title, l]) => `<h3 class="section-h">${title} <span class="muted small">· ${l.length}</span></h3><div class="stack">${l.map(card).join('')}</div>`).join('')
+      : emptyState({ icon: 'trash', title: 'Nothing here', text: 'Deleted and discarded inspections stay here for 30 days.' });
     view.addEventListener('click', async (e) => {
       const r = e.target.closest('[data-restore]'), p = e.target.closest('[data-purge]');
       try {

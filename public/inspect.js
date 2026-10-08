@@ -423,7 +423,7 @@ export function inspectViews({ shell, me }) {
       } catch (err) { toast(err.offline ? 'Posting a comment needs a connection.' : err.message, { error: true }); e.currentTarget.disabled = false; }
     });
     view.querySelector('#discard')?.addEventListener('click', async () => {
-      if (!(await confirmSheet('Discard this inspection?', { text: 'All its photos and notes are deleted. This cannot be undone.', okLabel: 'Discard' }))) return;
+      if (!(await confirmSheet('Discard this inspection?', { text: 'It moves to Recently deleted for 30 days, where an admin can restore it.', okLabel: 'Discard' }))) return;
       const pending = (await outbox.all()).filter((e) => e.inspectionId === id);
       try { if (!pending.some((e) => e.kind === 'start')) await del(`/inspections/${id}`); }
       catch (e) { return toast(e.offline ? 'Discarding needs a connection.' : e.message, { error: true }); }
