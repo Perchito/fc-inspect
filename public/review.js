@@ -55,7 +55,6 @@ export function reportViews({ shell, me }) {
   async function report(insp, reload) {
     const admin = me().role === 'admin';
     const id = insp.id, editing = admin && insp.status === 'submitted', ba = insp.mode === 'before_after';
-    const canComment = me().role !== 'cleaner';
     const PARTS = [['scores', 'Scores'], ['notes', 'Notes'], ['actions', 'Urgent action plans'], ['photos', 'Photos'], ['comments', 'Comments']];
     const score = avg(insp.items), low = insp.items.filter((it) => it.score && it.score < LOW_SCORE).length;
     const maps = (g) => g ? `<a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" rel="noopener">${icon('pin', 'inline')} Map</a> <span class="muted small">±${g.accuracy ?? '?'} m</span>` : '<span class="muted">not recorded</span>';
@@ -88,11 +87,11 @@ export function reportViews({ shell, me }) {
         </section>`).join('')}
       ${insp.inspector_sig ? `<section class="card"><h3>Supervisor signature</h3><img class="sig-img" src="${esc(insp.inspector_sig)}" alt="Signature of ${esc(insp.inspector_name)}">
         <p class="small muted">${esc(insp.submitted_by_name || insp.inspector_name)} · ${esc(fmtDateTime(insp.finished_at))}</p></section>` : ''}
-      ${insp.comments.length || canComment ? `<section class="card" id="comments"><h3>Comments</h3>
+      <section class="card" id="comments"><h3>Comments</h3>
         ${insp.comments.map((c) => `<p><strong>${esc(c.name)}</strong> <span class="muted small">${esc(relDay(c.created_at))}</span><br>${esc(c.body).replace(/\n/g, '<br>')}</p>`).join('') || '<p class="muted small">No comments yet.</p>'}
-        ${canComment ? `<label class="field"><span>Add a comment</span><textarea id="comment-body" rows="2" maxlength="2000" placeholder="Write a comment"></textarea></label>
-          <button class="btn sm primary" id="comment-post">Post comment</button>` : ''}
-      </section>` : ''}
+        <label class="field"><span>Add a comment</span><textarea id="comment-body" rows="2" maxlength="2000" placeholder="Write a comment"></textarea></label>
+          <button class="btn sm primary" id="comment-post">Post comment</button>
+      </section>
       <section class="card"><h3>PDF report</h3>
         <p class="muted small">Choose what goes in the PDF.</p>
         <div id="pdf-parts" style="display:flex;flex-direction:column">${PARTS.map(([k, label]) => `<label class="switch"><input type="checkbox" data-part="${k}" checked><span>${label}</span></label>`).join('')}</div>

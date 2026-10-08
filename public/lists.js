@@ -228,7 +228,7 @@ export function listViews({ shell, me }) {
 
   // ── my actions: urgent actions assigned to me ──
   async function myActions() {
-    const view = shell({ title: 'My actions', subtitle: 'Urgent fixes assigned to you', tab: me().role === 'cleaner' ? 'myactions' : 'actions', body: skeleton(3) });
+    const view = shell({ title: 'My actions', subtitle: 'Urgent fixes assigned to you', tab: 'actions', body: skeleton(3) });
     let list;
     try { list = await api('/me/actions'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = myActions; return; }
     const open = list.filter((a) => !a.action_done_at), done = list.filter((a) => a.action_done_at);

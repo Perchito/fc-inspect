@@ -5,9 +5,9 @@ import {
 } from './ui.js?v=__V__';
 
 const ROLE_LABEL = { admin: 'Admin', inspector: 'Supervisor', cleaner: 'Cleaner', client: 'Client' };
-// who can log in: admins, supervisors, and cleaners (cleaners only see the actions assigned to them); reports go to clients as PDFs
+// who can log in: admins, supervisors and cleaners (cleaners have the same access as supervisors); reports go to clients as PDFs
 const ACTIVE_ROLES = ['admin', 'inspector', 'cleaner'];
-const ROLE_HELP = 'Cleaners only see the urgent actions assigned to them. Supervisors do inspections. Admins also review, manage clients, templates and the team.';
+const ROLE_HELP = 'Supervisors and cleaners do every type of inspection and their assigned actions. Admins also review, manage clients, templates and the team.';
 
 export function adminViews({ shell, me, setLeaveGuard }) {
   const fail = (view, e, again) => { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = again; };
