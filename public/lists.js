@@ -71,7 +71,7 @@ export function listViews({ shell, me }) {
     view.innerHTML = `
       <a class="hero-cta" href="#/start">
         <span class="hero-ic">${icon('plus')}</span>
-        <span><strong>Start inspection</strong><small>Quality check or before &amp; after</small></span>
+        <span><strong>Start inspection</strong><small>Quality Check or Before &amp; After</small></span>
         ${icon('chevron', 'chev')}
       </a>
       ${cont.length ? `<h3 class="section-h">Continue where you left off</h3>
@@ -108,7 +108,7 @@ export function listViews({ shell, me }) {
         .filter((i) => !q || `${i.site_name} ${i.client_name} ${i.inspector_name || ''} ${title(i)}`.toLowerCase().includes(q));
       const count = (f) => (f === 'all' ? typed.length : typed.filter((i) => i.status === f).length);
       view.querySelector('#chips').innerHTML = chips(FILTERS.map(([v, l]) => [v, l, count(v)]), state.f);
-      view.querySelector('#types').innerHTML = chips([['all', 'All types'], ['check', 'Quality check'], ['ba', 'Before & after']], state.type, 'data-type');
+      view.querySelector('#types').innerHTML = chips([['all', 'All types'], ['check', 'Quality Check'], ['ba', 'Before & After']], state.type, 'data-type');
       const hits = typed.filter((i) => state.f === 'all' || i.status === state.f);
       view.querySelector('#results').innerHTML = hits.length ? grouped(hits, (i) => inspectionCard(i, { admin: isAdmin(), meId: me().id }))
         : list.length ? emptyState({ icon: 'search', title: 'Nothing here', text: 'Try another filter or search.' })

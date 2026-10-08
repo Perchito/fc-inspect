@@ -69,7 +69,7 @@ export function adminViews({ shell, me, setLeaveGuard }) {
           <div class="row-between"><div><strong>${esc(s.name)}</strong>${s.address ? `<p class="muted small">${esc(s.address)}</p>` : ''}</div>
             <div class="btn-row"><button class="icon-btn" data-edit-site="${s.id}" aria-label="Edit ${esc(s.name)}">${icon('pen')}</button>
               <button class="icon-btn danger" data-del-site="${s.id}" aria-label="Delete ${esc(s.name)}">${icon('trash')}</button></div></div>
-          <div class="tags">${s.template_ids.map((t) => `<span class="badge neutral">${esc(tName[t])}</span>`).join('') || '<span class="muted small">No checklist — only before &amp; after without a checklist</span>'}</div>
+          <div class="tags">${s.template_ids.map((t) => `<span class="badge neutral">${esc(tName[t])}</span>`).join('') || '<span class="muted small">No checklist yet — inspections here start empty</span>'}</div>
         </section>`).join('')}</div>` : emptyState({ icon: 'building', title: 'No sites yet', text: 'Add the places you inspect for this client.' })}
       ${history.length ? `<h3 class="section-h">Recent inspections</h3><div class="list-card">${history.map((i) => `<a class="row-link" href="#/inspections/${i.id}">
           <span class="row-main"><strong>${esc(i.site_name)} · ${esc(i.template_id ? i.template_name : modeLabel(i))}</strong><small>${esc(relDay(i.finished_at || i.started_at))} · ${esc(i.inspector_name)}</small></span>

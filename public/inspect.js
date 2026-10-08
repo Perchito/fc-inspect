@@ -283,18 +283,18 @@ export function inspectViews({ shell, me }) {
     if (!site) { location.replace('#/start'); return; }
     // every way to inspect this site: each checklist as a quality check or before & after, plus no checklist
     const options = [
-      ...site.templates.map((t) => ({ key: `check.${t.id}`, mode: 'check', template: t, title: t.name, kind: 'Quality check', ic: 'actions', text: `${t.item_count} items · score each 1–10` })),
-      ...site.templates.map((t) => ({ key: `ba.${t.id}`, mode: 'before_after', template: t, title: t.name, kind: 'Before & after', ic: 'image', text: `${t.item_count} items · photos before and after the clean` })),
-      { key: 'free', mode: 'before_after', template: null, title: 'No checklist', kind: 'Before & after', ic: 'plus', text: 'Start empty and add each item as you go' },
+      ...site.templates.map((t) => ({ key: `check.${t.id}`, mode: 'check', template: t, title: t.name, kind: 'Quality Check', ic: 'actions', text: `${t.item_count} items · score each 1–10` })),
+      ...site.templates.map((t) => ({ key: `ba.${t.id}`, mode: 'before_after', template: t, title: t.name, kind: 'Before & After', ic: 'image', text: `${t.item_count} items · photos before and after the clean` })),
+      { key: 'freecheck', mode: 'check', template: null, title: 'No checklist', kind: 'Quality Check', ic: 'plus', text: 'Start empty, add each item as you go and score it 1–10' },
+      { key: 'free', mode: 'before_after', template: null, title: 'No checklist', kind: 'Before & After', ic: 'plus', text: 'Start empty and add each item as you go' },
     ];
     if (!choice) {
       const group = (kind) => options.filter((o) => o.kind === kind).map((o) => `<a class="card tap media" href="#/start/${siteId}/${o.key}">
           <span class="card-ic ${o.mode === 'check' ? 'blue' : 'teal'}">${icon(o.ic)}</span>
           <span class="grow"><strong>${esc(o.title)}</strong><small>${esc(o.text)}</small></span>${icon('chevron', 'chev')}</a>`).join('');
       view.innerHTML = `${steps}<h2 class="screen-h">${esc(site.name)}</h2><p class="muted">${esc(site.client_name)}</p>
-        <h3 class="section-h">Quality check <span class="muted small">· shared with the client</span></h3>
-        ${site.templates.length ? `<div class="stack">${group('Quality check')}</div>` : '<p class="note-box">No checklist set up for this site yet — ask the office.</p>'}
-        <h3 class="section-h">Before &amp; after <span class="muted small">· internal</span></h3><div class="stack">${group('Before & after')}</div>`;
+        <h3 class="section-h">Quality Check <span class="muted small">· shared with the client</span></h3><div class="stack">${group('Quality Check')}</div>
+        <h3 class="section-h">Before &amp; After <span class="muted small">· internal</span></h3><div class="stack">${group('Before & After')}</div>`;
       return;
     }
     const o = options.find((x) => x.key === choice);
@@ -355,8 +355,8 @@ export function inspectViews({ shell, me }) {
       <p class="muted">No site needed. It is saved under <strong>Prospects</strong>, where you can add the business details later.</p>
       <label class="field"><span>Business name <em>(optional)</em></span><input id="q-name" maxlength="200" autocomplete="off" placeholder="e.g. Joe's Café — or leave blank"></label>
       <fieldset class="choice"><legend>Type</legend>
-        <label class="chip-radio"><input type="radio" name="q-mode" value="check" checked><span>Quality check · score each item</span></label>
-        <label class="chip-radio"><input type="radio" name="q-mode" value="before_after"><span>Before &amp; after photos</span></label>
+        <label class="chip-radio"><input type="radio" name="q-mode" value="check" checked><span>Quality Check · score each item</span></label>
+        <label class="chip-radio"><input type="radio" name="q-mode" value="before_after"><span>Before &amp; After photos</span></label>
       </fieldset>
       <p class="muted small">No checklist: add each item as you go.</p>
       <p class="muted small center-text">${icon('pin', 'inline')} Your location is recorded when you start and finish.</p>
@@ -455,7 +455,7 @@ export function inspectViews({ shell, me }) {
         ${it.hint ? `<p class="muted">${esc(it.hint)}</p>` : ''}
         ${it.added ? `<p class="small">${free ? '' : '<span class="badge neutral">Added on site</span> '}<button class="link danger" id="remove-item">Remove this item</button></p>` : ''}
       </header>
-      <section class="block-section"><div class="row-between"><h3>${ba ? 'Before &amp; after' : 'Photos'}</h3><span class="muted small" id="photo-count"></span></div>
+      <section class="block-section"><div class="row-between"><h3>${ba ? 'Before &amp; After' : 'Photos'}</h3><span class="muted small" id="photo-count"></span></div>
         <div id="photos"></div>
         <div class="photo-actions">
           <label class="btn primary lg grow">${icon('camera')} ${ba ? 'Before photo' : 'Take photo'}<input type="file" accept="image/*" capture="environment" hidden data-add></label>

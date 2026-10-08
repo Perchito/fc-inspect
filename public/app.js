@@ -172,8 +172,8 @@ function about() {
       <p class="muted">Cleaning quality inspections for FC Cleaning Company</p><p class="small muted">Version ${esc(VERSION)}</p></section>
     <h3 class="section-h">How it works</h3>
     <div class="card stack small">
-      <p><strong>Quality checks</strong> score each item 1–10. Anything below 7 needs an urgent action with an owner and a deadline.</p>
-      <p><strong>Before &amp; after</strong> inspections pair a before photo with an after photo of the same spot. They are internal.</p>
+      <p><strong>Quality Checks</strong> score each item 1–10. Anything below 7 needs an urgent action with an owner and a deadline.</p>
+      <p><strong>Before &amp; After</strong> inspections pair a before photo with an after photo of the same spot. They are internal.</p>
       <p><strong>Notifications:</strong> every submitted inspection is emailed to the admins with the PDF attached — marked URGENT when something scored low.</p>
       <p><strong>Offline:</strong> you can start and complete inspections with no signal. Everything syncs when you reconnect.</p>
     </div>` });
