@@ -247,26 +247,51 @@ export const row = ({ href, ic, title, sub = '', right = '', danger = false, id 
 // ── save a PDF to the device ────────────────────────────
 // iPhone home-screen apps can't download files from a link (it only opens a viewer), so on phones the PDF is
 // fetched here and handed to the share sheet ("Save to Files", AirDrop, WhatsApp…). Elsewhere: normal download.
-export async function savePdf(url, fallbackName = 'FC-Inspection.pdf') {
-  toast('Preparing PDF…');
+// Phones save a PDF through the share sheet ("Save to Files"): an iPhone home-screen app can't download
+// from a link, it just opens the PDF as a page. The share sheet only opens straight after a tap, so
+// preloadPdf() fetches the PDF when the report opens and the Download tap can share it at once.
+const isTouch = () => navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+const pdfs = new Map(); // url -> Promise<File>
+const readyPdfs = new Map(); // url -> File, once fetched
+async function fetchPdf(url, fallbackName) {
   let res;
-  try { res = await fetch(url, { credentials: 'same-origin' }); } catch { return toast("Couldn't get the PDF — check your connection.", { error: true }); }
-  if (!res.ok) return toast("Couldn't get the PDF. Please try again.", { error: true });
-  const blob = await res.blob();
+  try { res = await fetch(url, { credentials: 'same-origin' }); } catch { throw new Error("Couldn't get the PDF — check your connection."); }
+  if (!res.ok) throw new Error("Couldn't get the PDF. Please try again.");
   const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')?.[1] || fallbackName;
-  const file = new File([blob], name, { type: 'application/pdf' });
-  if (navigator.canShare?.({ files: [file] }) && matchMedia('(pointer: coarse)').matches) {
-    const share = () => navigator.share({ files: [file], title: name });
-    try { await share(); return; } catch (e) { if (e.name === 'AbortError') return; }
-    // the tap "expired" while a big PDF downloaded: one more tap opens the share sheet
+  return new File([await res.blob()], name, { type: 'application/pdf' });
+}
+export function preloadPdf(url, fallbackName = 'FC-Inspection.pdf') {
+  if (!isTouch() || !navigator.share) return;
+  if (pdfs.has(url)) return;
+  pdfs.set(url, fetchPdf(url, fallbackName).then((f) => { readyPdfs.set(url, f); return f; }, (e) => { pdfs.delete(url); throw e; }));
+  pdfs.get(url).catch(() => {});
+}
+export const forgetPdfs = () => { pdfs.clear(); readyPdfs.clear(); };
+
+export async function savePdf(url, fallbackName = 'FC-Inspection.pdf') {
+  const share = (file) => navigator.share({ files: [file], title: file.name });
+  if (isTouch() && navigator.share) {
+    let file = readyPdfs.get(url);
+    if (file) { // fetched already: share inside the tap
+      try { await share(file); return; } catch (e) { if (e.name === 'AbortError') return; }
+    } else {
+      toast('Preparing PDF…');
+      preloadPdf(url, fallbackName);
+      try { file = await pdfs.get(url); } catch (e) { return toast(e.message, { error: true }); }
+      try { await share(file); return; } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    // the tap "expired" while the PDF downloaded: one more tap opens the share sheet
     await sheet({
       title: 'PDF ready', submitLabel: 'Save PDF',
-      text: `${name} · ${(blob.size / 1048576).toFixed(1)} MB. Tap Save PDF, then choose “Save to Files”.`,
-      onSubmit: async () => { try { await share(); } catch (e) { if (e.name !== 'AbortError') throw new Error("Couldn't open the share sheet on this phone."); } },
+      text: `${file.name} · ${(file.size / 1048576).toFixed(1)} MB. Tap Save PDF, then choose “Save to Files”.`,
+      onSubmit: async () => { try { await share(file); } catch (e) { if (e.name !== 'AbortError') throw new Error("Couldn't open the share sheet on this phone."); } },
     });
     return;
   }
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  toast('Preparing PDF…');
+  let file;
+  try { file = await fetchPdf(url, fallbackName); } catch (e) { return toast(e.message, { error: true }); }
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(file), download: file.name });
   document.body.append(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }

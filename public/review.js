@@ -2,7 +2,7 @@
 // actions done); supervisors see the same report read-only once it has been submitted.
 import {
   esc, icon, post, put, del, toast, sheet, confirmSheet, viewer, statusBadge, scoreBadge, modeLabel, fmtDateTime,
-  relDay, dueText, LOW_SCORE, savePdf, itemNums, areaHead, askName,
+  relDay, dueText, LOW_SCORE, savePdf, preloadPdf, forgetPdfs, itemNums, areaHead, askName,
 } from './ui.js?v=__V__';
 
 const avg = (items) => { const s = items.map((i) => i.score).filter(Boolean); return s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null; };
@@ -110,7 +110,10 @@ export function reportViews({ shell, me }) {
       const q = pdfQuery();
       view.querySelector('#pdf-view').href = `/api/inspections/${id}/pdf${q.length ? `?${q.join('&')}` : ''}`;
       view.querySelector('#pdf-down').href = `/api/inspections/${id}/pdf?${[...q, 'download=1'].join('&')}`;
+      preloadPdf(view.querySelector('#pdf-down').href);
     };
+    forgetPdfs(); // the report may have changed since: fetch afresh
+    syncPdf();
     view.querySelector('#pdf-parts').addEventListener('change', syncPdf);
     view.querySelector('#pdf-down').addEventListener('click', (e) => { e.preventDefault(); savePdf(e.currentTarget.href); });
     view.querySelector('#comment-post')?.addEventListener('click', async (e) => {
