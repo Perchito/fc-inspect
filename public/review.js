@@ -12,8 +12,9 @@ export function itemPhotosHtml(insp, it) {
   const ps = insp.photos.filter((p) => p.item_key === it.item_key);
   if (!ps.length) return '';
   const fig = (p, label) => p ? `<figure class="ph"><button class="ph-open" data-view="${p.id}" aria-label="View ${label}">
-    <img src="/api/photos/${p.id}" alt="${label}" loading="lazy" decoding="async"></button></figure>` : '<div class="ph-blank" aria-hidden="true"></div>'; // missing photo: plain white
-  if (insp.mode !== 'before_after') return `<div class="ph-grid">${ps.map((p) => fig(p, 'photo')).join('')}</div>`;
+    <img src="/api/photos/${p.id}" alt="${label}" loading="lazy" decoding="async"></button>${p.caption?.trim() ? `<figcaption>${esc(p.caption)}</figcaption>` : ''}</figure>` : '<div class="ph-blank" aria-hidden="true"></div>'; // missing photo: plain white
+  // photos with notes (quick inspections): one per row, the note under it
+  if (insp.mode !== 'before_after') return `<div class="${ps.some((p) => p.caption?.trim()) ? 'ph-list' : 'ph-grid'}">${ps.map((p) => fig(p, 'photo')).join('')}</div>`;
   const befores = ps.filter((p) => p.phase !== 'after');
   const orphans = ps.filter((p) => p.phase === 'after' && !befores.some((b) => b.id === p.pair_id));
   const head = '<div class="pair-label"><span>Before</span><span>After</span></div>';
@@ -72,16 +73,16 @@ export function reportViews({ shell, me }) {
           ${low ? `<dt>Issues</dt><dd><span class="badge red">${low} below ${LOW_SCORE}/10</span></dd>` : ''}
           ${insp.approved_at ? `<dt>Approved</dt><dd>${esc(fmtDateTime(insp.approved_at))} by ${esc(insp.approved_by_name)}</dd>` : ''}
           ${ba ? '<dt>Visibility</dt><dd>Internal</dd>' : ''}
-          ${insp.client_prospect ? `<dt>Prospect</dt><dd><a href="#/prospects">${insp.client_name === 'New prospect' ? 'Add the business name' : 'Edit business details'}</a></dd>` : ''}
+          ${insp.client_prospect ? `<dt>Prospect</dt><dd><a href="#/prospects">${/^New (prospect|client)$/.test(insp.client_name) ? 'Add the business name' : 'Edit business details'}</a></dd>` : ''}
         </dl>
       </section>
       ${editing ? '<p class="note-box">You can tidy up notes and delete photos before approving.</p>' : ''}
       ${insp.items.map((it, n) => `${areaHead(insp.items, nums, n, { rename: editing })}
         <section class="card report-item">
           ${it.label?.trim() || it.score ? `<div class="row-between"><h3>${it.label?.trim() ? `<span class="muted">${nums[n]}${it.area ? '' : '.'}</span> ${esc(it.label)}` : ''}${it.added && insp.template_id ? ' <span class="badge neutral">Added on site</span>' : ''}</h3>${scoreBadge(it.score)}</div>` : ''}
-          ${editing ? `<button class="link" data-rename-item="${esc(it.item_key)}">${icon('pen', 'inline')} Rename item</button>` : ''}
+          ${editing && it.label?.trim() ? `<button class="link" data-rename-item="${esc(it.item_key)}">${icon('pen', 'inline')} Rename item</button>` : ''}
           ${actionPlanHtml(it, { canToggle: admin && insp.status !== 'draft', inspectionId: id })}
-          ${editing ? `<label class="field"><span>Notes</span><textarea data-note="${esc(it.item_key)}" rows="2" placeholder="No notes">${esc(it.note)}</textarea></label>`
+          ${editing && it.label?.trim() ? `<label class="field"><span>Notes</span><textarea data-note="${esc(it.item_key)}" rows="2" placeholder="No notes">${esc(it.note)}</textarea></label>`
             : it.note ? `<p class="note">${esc(it.note)}</p>` : ''}
           <div data-photos="${esc(it.item_key)}">${itemPhotosHtml(insp, it)}</div>
         </section>`).join('')}

@@ -204,7 +204,7 @@ export function listViews({ shell, me }) {
     try { list = await api('/prospects'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = prospects; return; }
     const admin = me().role === 'admin';
     view.innerHTML = list.length ? `<div class="stack">${list.map((p) => `<section class="card">
-        <div class="row-between"><h3>${esc(p.name)}</h3><button class="btn sm" data-edit="${p.id}">${icon('pen')} ${p.name === 'New prospect' ? 'Add name' : 'Edit'}</button></div>
+        <div class="row-between"><h3>${esc(p.name)}</h3><button class="btn sm" data-edit="${p.id}">${icon('pen')} ${/^New (prospect|client)$/.test(p.name) ? 'Add name' : 'Edit'}</button></div>
         <p class="small muted">${[p.contact_name, p.phone, p.email, p.address].filter(Boolean).map(esc).join(' · ') || 'No details yet'}</p>
         <div class="list-card">${p.inspections.map((i) => `<a class="row-link" href="#/inspections/${i.id}">
           <span class="row-main"><strong>${esc(title(i))}</strong><small>${esc(relDay(i.started_at))} · ${esc(i.inspector_name)}</small></span>${statusBadge(i.status)}${icon('chevron', 'row-chev')}</a>`).join('')}</div>
@@ -217,7 +217,7 @@ export function listViews({ shell, me }) {
       if (edit) {
         const p = list.find((x) => x.id === edit.dataset.edit);
         const ok = await sheet({ title: 'Prospect details', submitLabel: 'Save', fields: [
-          { name: 'name', label: 'Business name', value: p.name === 'New prospect' ? '' : p.name, required: true },
+          { name: 'name', label: 'Business name', value: /^New (prospect|client)$/.test(p.name) ? '' : p.name, required: true },
           { name: 'contact_name', label: 'Contact name', value: p.contact_name }, { name: 'phone', label: 'Phone', type: 'tel', value: p.phone },
           { name: 'email', label: 'Email', type: 'email', value: p.email }, { name: 'address', label: 'Address', type: 'textarea', value: p.address },
         ], onSubmit: (v) => put(`/prospects/${p.id}`, v) });

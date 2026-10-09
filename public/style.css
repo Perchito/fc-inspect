@@ -240,6 +240,13 @@ ul.plain, ol.plain { list-style: none; margin: 0; padding: 0; }
 .ph.pending img { opacity: .7; }
 .up-state { position: absolute; left: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(5, 16, 31, .78); color: #fff; font-size: 11px; font-weight: 600; max-width: calc(100% - 12px); pointer-events: none; white-space: nowrap; overflow: hidden; }
 .up-state .ic { width: 12px; height: 12px; }
+/* photos with a note under each (quick inspections, and their report) */
+.ph-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); margin-bottom: var(--s4); }
+.ph-list .ph { aspect-ratio: auto; overflow: visible; background: none; }
+.ph-list .ph-open { height: auto; aspect-ratio: 4 / 3; border-radius: var(--r2); overflow: hidden; background: #fff; }
+.ph-list .up-state { bottom: auto; top: 6px; }
+.ph-list textarea { margin-top: 8px; width: 100%; font-size: 16px; }
+.ph-list figcaption { margin-top: 6px; white-space: pre-wrap; }
 .ph-empty { display: flex; align-items: center; gap: var(--s3); padding: var(--s4); border: 1.5px dashed var(--line-2); border-radius: var(--r2); color: var(--muted); font-size: 15px; }
 .pairs { display: grid; gap: var(--s3); }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r3); padding: 10px; }
