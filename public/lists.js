@@ -199,7 +199,7 @@ export function listViews({ shell, me }) {
 
   // ── prospects: businesses inspected with a quick inspection, before they are clients ──
   async function prospects() {
-    const view = shell({ title: 'Prospects', subtitle: 'Potential clients from quick inspections', back: '#/more', tab: 'more', body: skeleton(3) });
+    const view = shell({ title: 'Prospects', subtitle: 'Potential clients from site walkthroughs', back: '#/more', tab: 'more', body: skeleton(3) });
     let list;
     try { list = await api('/prospects'); } catch (e) { view.innerHTML = errorState(e); view.querySelector('#retry').onclick = prospects; return; }
     const admin = me().role === 'admin';
@@ -210,8 +210,8 @@ export function listViews({ shell, me }) {
           <span class="row-main"><strong>${esc(title(i))}</strong><small>${esc(relDay(i.started_at))} · ${esc(i.inspector_name)}</small></span>${statusBadge(i.status)}${icon('chevron', 'row-chev')}</a>`).join('')}</div>
         ${admin ? `<button class="btn sm block" data-convert="${p.id}" style="margin-top:10px">${icon('building')} Make a client</button>` : ''}
       </section>`).join('')}</div>`
-      : emptyState({ icon: 'sparkle', title: 'No prospects yet', text: 'Start a quick inspection to inspect a business that is not a client yet.',
-          action: '<a class="btn primary" href="#/quick">Quick inspection</a>' });
+      : emptyState({ icon: 'sparkle', title: 'No prospects yet', text: 'Start a site walkthrough to look round a business that is not a client yet.',
+          action: '<a class="btn primary" href="#/quick">Site walkthrough</a>' });
     view.addEventListener('click', async (e) => {
       const edit = e.target.closest('[data-edit]'), conv = e.target.closest('[data-convert]');
       if (edit) {

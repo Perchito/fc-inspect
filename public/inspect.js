@@ -270,7 +270,7 @@ export function inspectViews({ shell, me }) {
     const steps = `<ol class="steps" aria-hidden="true">${[1, 2, 3].map((i) => `<li class="${i <= stepNo ? 'on' : ''}"></li>`).join('')}</ol>`;
     if (!siteId) {
       view.innerHTML = `${steps}<a class="card tap media" href="#/quick"><span class="card-ic teal">${icon('sparkle')}</span>
-          <span class="grow"><strong>Quick inspection</strong><small>No site needed — just photos and notes, name it at the end</small></span>${icon('chevron', 'chev')}</a>
+          <span class="grow"><strong>Site walkthrough</strong><small>No site needed — just photos and notes, name it at the end</small></span>${icon('chevron', 'chev')}</a>
         <h2 class="screen-h">Which site?</h2>${searchBar('Search sites or clients')}<div class="stack" id="sites"></div>`;
       const $q = view.querySelector('input'), $list = view.querySelector('#sites');
       const render = () => {
@@ -356,13 +356,13 @@ export function inspectViews({ shell, me }) {
 
   // ── quick inspection: no site, no checklist. Starts straight away; named (or left "New client") at the end ──
   async function quick() {
-    shell({ title: 'Quick inspection', back: '#/start', focus: true, body: skeleton(2) });
+    shell({ title: 'Site walkthrough', back: '#/start', focus: true, body: skeleton(2) });
     watchGps();
     const id = crypto.randomUUID(), started_at = new Date().toISOString();
     const start_gps = await currentGps(3000);
     await outbox.put({ id: `start:${id}`, inspectionId: id, kind: 'start', method: 'POST', url: '/api/inspections', contentType: 'application/json',
       body: JSON.stringify({ id, quick: { name: '' }, template_id: null, start_gps, started_at }),
-      local: { mode: 'check', template_id: null, template_name: 'Quick inspection', site_name: NEW_CLIENT, site_address: null, client_prospect: true,
+      local: { mode: 'check', template_id: null, template_name: 'Site walkthrough', site_name: NEW_CLIENT, site_address: null, client_prospect: true,
         client_name: NEW_CLIENT, started_at, inspector_name: me().name, inspector_id: me().id, items: [{ item_key: QUICK_KEY, label: '', hint: '', area: '' }] } });
     current = null;
     location.replace(base(id));
@@ -371,7 +371,7 @@ export function inspectViews({ shell, me }) {
   async function quickView(insp) {
     const id = insp.id;
     watchGps();
-    const view = shell({ title: 'Quick inspection', subtitle: insp.client_name, back: '#/inspections', focus: true, body: `
+    const view = shell({ title: 'Site walkthrough', subtitle: insp.client_name, back: '#/inspections', focus: true, body: `
       <div id="photos" class="ph-list"></div>
       <div class="photo-actions">
         <label class="btn primary lg grow">${icon('camera')} Take photo<input type="file" accept="image/*" capture="environment" hidden data-add></label>
@@ -463,7 +463,7 @@ export function inspectViews({ shell, me }) {
     view.querySelector('#finish').onclick = async () => {
       saveAll();
       if (!shown.length) { toast('Take at least one photo first', { error: true }); return; }
-      const v = await sheet({ title: 'Finish quick inspection', submitLabel: 'Submit', text: `Leave the name blank and it is saved as "${NEW_CLIENT}" — you can name it later under Prospects.`,
+      const v = await sheet({ title: 'Finish site walkthrough', submitLabel: 'Submit', text: `Leave the name blank and it is saved as "${NEW_CLIENT}" — you can name it later under Prospects.`,
         fields: [{ name: 'name', label: 'Business name (optional)', value: insp.client_name === NEW_CLIENT ? '' : insp.client_name, placeholder: NEW_CLIENT }] });
       if (!v) return;
       const name = v.name.trim().slice(0, 200), end_gps = await currentGps(5000);

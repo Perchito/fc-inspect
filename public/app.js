@@ -131,8 +131,8 @@ function more() {
       ${row({ href: '#/templates', ic: 'template', title: 'Templates', sub: 'Inspection checklists' })}
       ${row({ href: '#/users', ic: 'users', title: 'Team', sub: 'Admins and supervisors' })}</div>` : ''}
     <h3 class="section-h">Prospects</h3><div class="list-card">
-      ${row({ href: '#/prospects', ic: 'sparkle', title: 'Prospects', sub: 'Potential clients from quick inspections' })}
-      ${row({ href: '#/quick', ic: 'plus', title: 'Quick inspection', sub: 'No site needed — just photos and notes' })}</div>
+      ${row({ href: '#/prospects', ic: 'sparkle', title: 'Prospects', sub: 'Potential clients from site walkthroughs' })}
+      ${row({ href: '#/quick', ic: 'plus', title: 'Site walkthrough', sub: 'No site needed — just photos and notes' })}</div>
     <h3 class="section-h">App</h3><div class="list-card">
       ${row({ href: '#/notify-settings', ic: 'bell', title: 'Notification settings', sub: 'Phone alerts, what to get, email' })}
       ${row({ href: '#/sync', ic: 'sync', title: 'Offline & sync', sub: syncInfo().text })}
