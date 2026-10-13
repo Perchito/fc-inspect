@@ -45,7 +45,7 @@ self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { title: e.data?.text() }; }
   e.waitUntil(self.registration.showNotification(d.title || 'New notification', {
-    body: d.body || '', icon: '/img/icon-192.png', badge: '/img/icon-192.png', tag: d.tag || undefined, data: { link: d.link || '/' },
+    body: d.body || '', icon: '/img/app-icon-192.png', badge: '/img/app-icon-192.png', tag: d.tag || undefined, data: { link: d.link || '/' },
   }));
 });
 // tapping it opens the app (or the open window) on the right screen
